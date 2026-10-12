@@ -72,16 +72,27 @@ pub fn run_refresher(
     }
 }
 
-/// Executa as ações da bandeja. Retorna quando uma ação pede para encerrar.
-pub fn run_actions(actions: Receiver<Action>, exec: &Executor, wake: Sender<Wake>) {
+/// Por que o laço de ações terminou.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stop {
+    /// O usuário escolheu "Sair": o processo deve encerrar.
+    Quit,
+    /// A bandeja sumiu (canal de ações fechado): o daemon deve continuar sem ela.
+    TrayGone,
+}
+
+/// Executa as ações da bandeja. Retorna `Stop::Quit` quando uma ação pede para encerrar e
+/// `Stop::TrayGone` quando todos os remetentes (a bandeja) foram descartados.
+pub fn run_actions(actions: Receiver<Action>, exec: &Executor, wake: Sender<Wake>) -> Stop {
     for action in actions {
         match exec.execute(action) {
             Outcome::Refresh => {
                 let _ = wake.send(Wake);
             }
-            Outcome::Exit => return,
+            Outcome::Exit => return Stop::Quit,
         }
     }
+    Stop::TrayGone
 }
 
 #[cfg(test)]
@@ -233,9 +244,27 @@ mod tests {
         act_tx.send(Action::OpenGui).unwrap();
         act_tx.send(Action::Quit).unwrap();
         act_tx.send(Action::OpenGui).unwrap(); // depois do Quit: não deve ser executado
-        run_actions(act_rx, &exec, wake_tx);
+        assert_eq!(run_actions(act_rx, &exec, wake_tx), Stop::Quit);
         assert_eq!(wake_rx.try_iter().count(), 2);
         assert_eq!(link.calls(), vec!["set_active_level:on:0".to_string(), "shutdown".to_string()]);
+    }
+
+    #[test]
+    fn actions_loop_reports_tray_gone_when_the_channel_closes() {
+        let link = Arc::new(FakeLink::default());
+        *link.devices.lock().unwrap() = vec![sample_summary("on", true)];
+        let service = Arc::new(FakeService::default());
+        *service.stop_result.lock().unwrap() = Ok(false);
+        let launcher = Arc::new(FakeLauncher::default());
+        let notifier = Arc::new(FakeNotifier::default());
+        let exec = Executor::new(link.clone(), service, launcher, notifier);
+        let (act_tx, act_rx) = channel();
+        let (wake_tx, wake_rx) = channel();
+        act_tx.send(Action::SetDpiLevel(0)).unwrap();
+        drop(act_tx);
+        assert_eq!(run_actions(act_rx, &exec, wake_tx), Stop::TrayGone);
+        assert!(!link.calls().contains(&"shutdown".to_string()));
+        assert_eq!(wake_rx.try_iter().count(), 1);
     }
 
     #[test]

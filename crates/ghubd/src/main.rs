@@ -7,7 +7,7 @@ use std::time::Duration;
 use ghub_ipc::{BUS_NAME, INTERFACE, OBJECT_PATH};
 use ghubd::actions::{Action, Executor};
 use ghubd::backend::SysBackend;
-use ghubd::hub::{self, Wake};
+use ghubd::hub::{self, Stop, Wake};
 use ghubd::link::{ChannelLink, GuiLauncher, ManagerLink, SystemctlControl};
 use ghubd::manager::{Command, Event, Manager};
 use ghubd::notify::{DbusNotifier, LogNotifier, Notification, Notifier};
@@ -123,9 +123,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
             let wake_tx = wake_tx.clone();
             thread::spawn(move || {
-                hub::run_actions(action_rx, &exec, wake_tx);
-                // "Sair": o gerente já foi avisado (ou o systemd vai parar o serviço).
-                std::process::exit(0);
+                match hub::run_actions(action_rx, &exec, wake_tx) {
+                    // "Sair": o gerente já foi avisado (ou o systemd vai parar o serviço).
+                    Stop::Quit => std::process::exit(0),
+                    Stop::TrayGone => eprintln!("ghubd: bandeja encerrada; o daemon continua"),
+                }
             });
         }
         Err(e) => eprintln!("ghubd: bandeja indisponível: {e}"),
