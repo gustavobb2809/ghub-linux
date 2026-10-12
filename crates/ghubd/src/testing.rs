@@ -94,6 +94,8 @@ impl Mouse for FakeMouse {
 pub struct FakeBackend {
     pub mice: Vec<(String, String, FakeMouse)>,
     pub battery: Arc<Mutex<Option<BatteryInfo>>>,
+    /// Lista `skip` recebida na última varredura.
+    pub last_skip: Vec<String>,
 }
 
 impl FakeBackend {
@@ -104,6 +106,7 @@ impl FakeBackend {
             FakeBackend {
                 mice: vec![("dev-1".to_string(), "G703 LS".to_string(), mouse)],
                 battery: battery.clone(),
+                last_skip: Vec::new(),
             },
             battery,
         )
@@ -111,10 +114,11 @@ impl FakeBackend {
 }
 
 impl Backend for FakeBackend {
-    fn scan(&mut self) -> Vec<Found> {
+    fn scan(&mut self, skip: &[String]) -> Vec<Found> {
+        self.last_skip = skip.to_vec();
         self.mice
             .iter()
-            .filter(|(_, _, m)| m.state().online)
+            .filter(|(id, _, m)| m.state().online && !skip.contains(id))
             .map(|(id, name, m)| Found {
                 id: id.clone(),
                 name: name.clone(),

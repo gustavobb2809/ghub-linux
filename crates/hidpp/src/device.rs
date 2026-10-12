@@ -55,6 +55,8 @@ impl<T: Transport> Device<T> {
     /// alheias (outra feature, função ou SW_ID) são ignorados.
     pub fn request(&mut self, feature_index: u8, function: u8, params: &[u8]) -> Result<Vec<u8>> {
         let req = Report::request(self.device_index, feature_index, function, params);
+        // Respostas velhas (de outro descritor no mesmo nó) seriam tomadas por esta.
+        self.transport.discard_pending()?;
         self.transport.write(&req.encode()?)?;
         let deadline = Instant::now() + self.timeout;
         loop {

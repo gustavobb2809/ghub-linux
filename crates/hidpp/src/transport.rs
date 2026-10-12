@@ -7,6 +7,11 @@ pub trait Transport {
     fn write(&mut self, data: &[u8]) -> Result<()>;
     /// `Ok(None)` quando o tempo esgota sem nada para ler.
     fn read(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>>;
+    /// Descarta, sem esperar, os relatórios já enfileirados (respostas velhas de outras
+    /// requisições). O padrão não faz nada.
+    fn discard_pending(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Transporte roteirizado para testes: devolve os relatórios enfileirados, na ordem,

@@ -371,7 +371,11 @@ impl<B: Backend> Manager<B> {
     }
 
     pub fn rescan(&mut self) {
-        let found = self.backend.scan();
+        // Dispositivos online não são sondados de novo: as respostas da sonda chegariam
+        // também ao descritor deles e confundiriam o próximo `ping`.
+        let online: Vec<String> =
+            self.devices.iter().filter(|d| d.mouse.is_some()).map(|d| d.id.clone()).collect();
+        let found = self.backend.scan(&online);
         let mut changed = false;
         for f in found {
             let idx = match self.devices.iter().position(|d| d.id == f.id) {
@@ -862,6 +866,21 @@ mod tests {
         ctx.send(Command::Shutdown).unwrap();
         worker.join().unwrap();
         assert!(drain(&events).contains(&Event::DevicesChanged));
+    }
+
+    #[test]
+    fn online_devices_are_skipped_when_scanning() {
+        let (mut m, _rx, _mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        let other = FakeMouse::new(1600, 1000);
+        m.backend.mice.push(("dev-2".to_string(), "Outro".to_string(), other.clone()));
+        m.rescan();
+        assert!(m.devices().iter().all(|d| d.connected));
+        other.state().online = false;
+        m.tick(); // dev-2 fica offline e o tick varre de novo
+        assert!(m.backend.last_skip.contains(&"dev-1".to_string()));
+        assert!(!m.backend.last_skip.contains(&"dev-2".to_string()));
+        m.rescan();
+        assert_eq!(m.backend.last_skip, vec!["dev-1".to_string()]);
     }
 
     #[test]
