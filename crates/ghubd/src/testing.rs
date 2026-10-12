@@ -2,12 +2,17 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use ghub_ipc::{DeviceState, DeviceSummary};
 use hidpp::features::dpi::DpiSupport;
 use hidpp::HidppError;
 
 use crate::backend::{Backend, Found};
 use crate::battery_sysfs::BatteryInfo;
+use crate::link::{Launcher, ManagerLink, ServiceControl};
+use crate::manager::ManagerError;
 use crate::mouse::{Capabilities, Mouse, MouseResult};
+use crate::notify::{Notification, Notifier};
+use crate::tray_model::Autostart;
 
 pub struct FakeState {
     pub online: bool,
@@ -136,5 +141,181 @@ impl Backend for FakeBackend {
 
     fn battery(&mut self, _id: &str) -> Option<BatteryInfo> {
         self.battery.lock().unwrap().clone()
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+pub fn sample_summary(id: &str, connected: bool) -> DeviceSummary {
+    DeviceSummary {
+        id: id.into(),
+        name: format!("Mouse {id}"),
+        connected,
+        battery_percent: 80,
+        battery_state: "discharging".into(),
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+pub fn sample_state(id: &str, connected: bool) -> DeviceState {
+    DeviceState {
+        id: id.into(),
+        name: format!("Mouse {id}"),
+        connected,
+        dpi_current: if connected { 1200 } else { 0 },
+        dpi_levels: vec![800, 1200, 1600],
+        active_level: 1,
+        dpi_min: 100,
+        dpi_max: 25600,
+        dpi_step: 50,
+        dpi_list: vec![],
+        polling_hz: if connected { 1000 } else { 0 },
+        polling_supported: vec![125, 250, 500, 1000],
+        battery_percent: 80,
+        battery_state: "discharging".into(),
+        profile: "Padrão".into(),
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+pub struct FakeLink {
+    pub devices: Mutex<Vec<DeviceSummary>>,
+    pub state: Mutex<Option<DeviceState>>,
+    pub profiles: Mutex<Vec<String>>,
+    pub active: Mutex<String>,
+    pub level_result: Mutex<Result<(), ManagerError>>,
+    pub profile_result: Mutex<Result<(), ManagerError>>,
+    pub calls: Mutex<Vec<String>>,
+}
+
+impl Default for FakeLink {
+    fn default() -> Self {
+        FakeLink {
+            devices: Mutex::new(Vec::new()),
+            state: Mutex::new(None),
+            profiles: Mutex::new(Vec::new()),
+            active: Mutex::new(String::new()),
+            level_result: Mutex::new(Ok(())),
+            profile_result: Mutex::new(Ok(())),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+impl FakeLink {
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl ManagerLink for FakeLink {
+    fn devices(&self) -> Vec<DeviceSummary> {
+        self.devices.lock().unwrap().clone()
+    }
+    fn state(&self, _id: &str) -> Option<DeviceState> {
+        self.state.lock().unwrap().clone()
+    }
+    fn profiles(&self) -> Vec<String> {
+        self.profiles.lock().unwrap().clone()
+    }
+    fn active_profile(&self) -> String {
+        self.active.lock().unwrap().clone()
+    }
+    fn set_active_level(&self, id: &str, level: usize) -> Result<(), ManagerError> {
+        self.calls.lock().unwrap().push(format!("set_active_level:{id}:{level}"));
+        self.level_result.lock().unwrap().clone()
+    }
+    fn activate_profile(&self, name: &str) -> Result<(), ManagerError> {
+        self.calls.lock().unwrap().push(format!("activate_profile:{name}"));
+        self.profile_result.lock().unwrap().clone()
+    }
+    fn shutdown(&self) {
+        self.calls.lock().unwrap().push("shutdown".into());
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+pub struct FakeService {
+    pub autostart: Mutex<Autostart>,
+    pub set_result: Mutex<Result<(), String>>,
+    pub stop_result: Mutex<Result<bool, String>>,
+    pub calls: Mutex<Vec<String>>,
+}
+
+impl Default for FakeService {
+    fn default() -> Self {
+        FakeService {
+            autostart: Mutex::new(Autostart::Disabled),
+            set_result: Mutex::new(Ok(())),
+            stop_result: Mutex::new(Ok(true)),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+impl FakeService {
+    pub fn calls(&self) -> Vec<String> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl ServiceControl for FakeService {
+    fn autostart(&self) -> Autostart {
+        *self.autostart.lock().unwrap()
+    }
+    fn set_autostart(&self, enable: bool) -> Result<(), String> {
+        self.calls.lock().unwrap().push(format!("set_autostart:{enable}"));
+        self.set_result.lock().unwrap().clone()
+    }
+    fn stop(&self) -> Result<bool, String> {
+        self.calls.lock().unwrap().push("stop".into());
+        self.stop_result.lock().unwrap().clone()
+    }
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+pub struct FakeLauncher {
+    pub result: Mutex<Result<(), String>>,
+    pub opened: Mutex<u32>,
+}
+
+impl Default for FakeLauncher {
+    fn default() -> Self {
+        FakeLauncher { result: Mutex::new(Ok(())), opened: Mutex::new(0) }
+    }
+}
+
+impl Launcher for FakeLauncher {
+    fn open_gui(&self) -> Result<(), String> {
+        *self.opened.lock().unwrap() += 1;
+        self.result.lock().unwrap().clone()
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Default)]
+pub struct FakeNotifier {
+    pub sent: Mutex<Vec<Notification>>,
+}
+
+// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
+#[allow(dead_code)]
+impl FakeNotifier {
+    pub fn sent(&self) -> Vec<Notification> {
+        self.sent.lock().unwrap().clone()
+    }
+}
+
+impl Notifier for FakeNotifier {
+    fn notify(&self, n: &Notification) {
+        self.sent.lock().unwrap().push(n.clone());
     }
 }

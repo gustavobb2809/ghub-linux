@@ -2,6 +2,7 @@
 
 pub mod backend;
 pub mod battery_sysfs;
+pub mod link;
 pub mod mouse;
 pub mod notify;
 pub mod profile;
