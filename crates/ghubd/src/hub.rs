@@ -104,7 +104,7 @@ mod tests {
     use crate::tray_icon::IconState;
     use crate::tray_model::{Autostart, Entry};
     use std::sync::mpsc::channel;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use std::thread;
 
     #[test]
@@ -208,24 +208,24 @@ mod tests {
     fn refresher_reflects_new_state_on_the_next_refresh() {
         let link = Arc::new(FakeLink::default());
         let service = Arc::new(FakeService::default());
-        let seen: Arc<Mutex<Vec<IconState>>> = Arc::new(Mutex::new(Vec::new()));
         let (wake_tx, wake_rx) = channel::<Wake>();
-        let (l, s, sn) = (link.clone(), service.clone(), seen.clone());
+        let (view_tx, view_rx) = channel::<IconState>();
+        let (l, s) = (link.clone(), service.clone());
         let handle = thread::spawn(move || {
             run_refresher(wake_rx, &*l, &*s, Duration::from_secs(60), &mut |v| {
-                sn.lock().unwrap().push(v.icon);
+                let _ = view_tx.send(v.icon);
             });
         });
-        thread::sleep(Duration::from_millis(100));
+        // Espera a vista inicial ANTES de mudar o estado do gerente falso.
+        let initial = view_rx.recv_timeout(Duration::from_secs(2)).expect("vista inicial");
+        assert_eq!(initial, IconState::Disconnected);
         *link.devices.lock().unwrap() = vec![sample_summary("a", true)];
         *link.state.lock().unwrap() = Some(sample_state("a", true));
         wake_tx.send(Wake).unwrap();
-        thread::sleep(Duration::from_millis(500));
+        let next = view_rx.recv_timeout(Duration::from_secs(2)).expect("vista atualizada");
+        assert_eq!(next, IconState::Normal);
         drop(wake_tx);
         handle.join().unwrap();
-        let seen = seen.lock().unwrap().clone();
-        assert_eq!(seen.first(), Some(&IconState::Disconnected));
-        assert_eq!(seen.last(), Some(&IconState::Normal));
     }
 
     #[test]
