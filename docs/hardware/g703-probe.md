@@ -2,7 +2,7 @@
 
 - **Data:** 2026-10-12
 - **Comando:** `cargo run -q -p ghubctl -- probe` (somente leitura, nenhum setter chamado)
-- **Hardware:** receptor LIGHTSPEED `046d:c539` (`/dev/hidraw4`) + G703 LS `046d:4086` (`/dev/hidraw8`, nó virtual criado pelo `hid-logitech-dj`)
+- **Hardware:** receptor LIGHTSPEED `046d:c539` (`/dev/hidraw4`) + G703 LS `046d:4086` (`/dev/hidraw8`, provavelmente um nó virtual criado pelo `hid-logitech-dj` — inferência, não verificada)
 - **Permissão:** regra `docs/udev/70-ghub-linux.rules` instalada em `/etc/udev/rules.d/`
 
 ## Saída completa
@@ -67,7 +67,7 @@
 
 - **Nó que funcionou:** `/dev/hidraw4` (receptor `046d:c539`), **índice de dispositivo `0x01`**.
 - **Protocolo:** HID++ **4.2**.
-- **Outros índices no receptor (`0x02`–`0x06`, `0x00`):** erro HID++ 1.0 `0x08` (sem dispositivo pareado nesse slot). `0xff` (o próprio receptor): erro HID++ 1.0 `0x01`, ou seja, o receptor fala HID++ 1.0 e não 2.0.
+- **Outros índices no receptor (`0x02`–`0x06`, `0x00`):** erro HID++ 1.0 `0x08` (provavelmente sem dispositivo pareado nesse slot — inferência pelo conhecimento público do protocolo). `0xff` (o próprio receptor): erro HID++ 1.0 `0x01`, o que provavelmente indica que o receptor só fala HID++ 1.0 (inferência).
 - **Nó do mouse `/dev/hidraw8`:** o índice `0x01` responde ao ping (HID++ 4.2), mas `IRoot.getFeature(0x0001)` não devolve índice, então a listagem de features falha; os demais índices dão timeout. Para este hardware, usar o nó do receptor.
 
 ## Hipótese vs. observado
@@ -89,3 +89,16 @@
 - **Polling (`0x8060`):** atual `1000 Hz`; suportados `1000, 500, 250, 125 Hz`.
 - **Botões:** `0x1B04` ausente. O remapeamento terá de passar pelos perfis onboard (`0x8100`) ou outra feature; a investigar na fase v1.2.
 - **Outras features anunciadas, sem nome no `ghubctl` (nomes pelo conhecimento público, não verificados):** `0x1d4b` (Wireless Device Status), `0x0020` (Config Change), `0x8110` (Mouse Button Spy), `0x00c2` (DFU Control), `0x1802`–`0x18b1`, `0x1df3`, `0x1e00`, `0x1eb0`, `0x1e22` (features internas/diagnóstico do fabricante, não usar).
+
+## Achados para os próximos planos
+
+- **Bateria:** preferir sysfs `/sys/class/power_supply/hidpp_battery_*` (`capacity`, `status`, `voltage_now`), ligado ao dispositivo pelo pai HID (`0003:046D:4086.*`); implementar `0x1001` em `hidpp` só como alternativa.
+- **Descoberta:** usar o nó do receptor (hidraw `046d:c539`) e os slots 1–6; classificar erros 1.0: `0x08` = slot vazio, `0x09` = dispositivo offline/dormindo, `0x01` no índice `0xFF` = receptor só fala HID++ 1.0 (códigos do conhecimento público, não verificados neste hardware); ouvir notificações 1.0 de conexão/desconexão para hotplug.
+- **Nó filho:** não dirigir features pelo nó filho do `hid-logitech-dj` (hidraw do mouse): só o ping responde; hipótese não verificada: o driver reescreve o índice. `list_logitech` lista nós filhos também; agrupar por pai no sysfs para não duplicar o mouse.
+- **Convivência com o driver do kernel** (`hid-logitech-hidpp` está ligado ao mesmo dispositivo): SW_ID próprio (`0x0E`) e filtro estrito de respostas.
+- **Modo com fio/direto:** tentar os índices `0xFF` e `0x00`.
+- **Tipos de relatório:** detectar pelo descriptor se há relatório curto (`0x10`) e forçar longo quando não houver.
+- **Botões:** `0x1B04` ausente no G703; remapeamento v1.2 via `0x8100`; esconder a UI se nenhuma das duas for anunciada. RGB `0x8071` presente.
+- **Transporte/Device para o daemon:** repetir `poll` no `EINTR` com o tempo restante; tratar `POLLERR`/`POLLHUP` e leitura de tamanho zero como erro de E/S; esvaziar entrada pendente antes de escrever; `discover` deve ignorar id 0 e considerar flags de feature oculta/engenharia.
+- **Validar antes de escrever:** DPI e polling contra `DpiSupport` e `supported_hz` antes de chamar `set`/`set_hz`.
+- **Regra udev:** cobre todos os nós hidraw Logitech (inclui teclados); restringir às interfaces HID++ se necessário.
