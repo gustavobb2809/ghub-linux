@@ -1,10 +1,11 @@
 # ghubd — verificação no hardware real
 
 - **Data:** 2026-10-12 (horários de sinais em UTC; local = UTC-3)
-- **Commit:** `7696a89` (build debug, `cargo run -q -p ghubd`)
+- **Commit:** `7696a89` (build debug)
 - **Hardware:** G703 LIGHTSPEED no slot 1 do receptor LIGHTSPEED `046d:c539`
 - **ID do dispositivo:** `046dc539-1`
-- **Escritas:** autorizadas pelo usuário (passos 3 e 5). Nenhum passo usou `sudo`.
+- **Escritas:** as do passo 3 foram autorizadas pelo usuário. O passo 5 e a restauração também escrevem no mouse (registradas abaixo). O roteiro não usa `sudo`.
+- **Passo 2:** não houve rodada separada; a bateria foi conferida no passo 1 e o monitor de sinais rodou no passo 5 (resumo abaixo).
 
 Todas as chamadas abaixo têm o prefixo
 `busctl --user call org.ghublinux.Daemon /org/ghublinux/Daemon org.ghublinux.Daemon1`.
@@ -48,7 +49,7 @@ Depois de o usuário mexer o mouse (em no máximo um ciclo de 5 s):
 | `profiles.toml` semeado com `dpi_levels = [<DPI atual>]` | OK (`[1200]`) |
 | DPI do mouse não mudou | OK |
 
-## Passo 2 — bateria e monitor de sinais
+## Passo 2 — bateria e monitor de sinais (incorporado aos passos 1 e 5)
 
 - `busctl --user monitor org.ghublinux.Daemon` funcionou e gravou os sinais do passo 5 (rodada B).
 - Bateria: `battery_percent` 91 igual ao sysfs. O `battery_state` informado foi `"discharging"`; a comparação explícita com `/sys/class/power_supply/hidpp_battery_0/status` não foi registrada.

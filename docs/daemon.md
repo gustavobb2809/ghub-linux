@@ -41,7 +41,7 @@ polling_hz = 1000
 
 - Sem o arquivo, a primeira execução **semeia** o perfil `Padrão` com o DPI e o polling lidos do primeiro dispositivo encontrado (`dpi_levels = [<DPI atual>]`) e não escreve nada no mouse. Se não conseguir ler esses valores, não aplica nada e tenta de novo no próximo ciclo.
 - Cada perfil tem de 1 a 5 níveis de DPI (nenhum 0), `active_level` dentro da lista e `polling_hz` diferente de 0. Nomes de perfil: 1 a 64 caracteres, sem caracteres de controle.
-- A escrita é atômica (arquivo temporário, `fsync`, `rename`). Um arquivo inválido é renomeado para `profiles.toml.bak` e o daemon começa com o perfil padrão (avisando no stderr).
+- A escrita é atômica (arquivo temporário, `fsync`, `rename`). Um arquivo inválido é renomeado para `profiles.toml.bak` e o daemon começa com o perfil padrão (avisando no stderr). Se o arquivo não pôde ser lido, ou não pôde ser renomeado, salvar fica desativado até reiniciar, para nunca sobrescrever o arquivo do usuário sem cópia.
 
 ## Interface D-Bus
 
@@ -172,7 +172,7 @@ busctl --user call $D Rescan
 - A cada 5 s o gerente faz `ping` em cada dispositivo conectado (quem não responde fica offline), varre os receptores de novo se não houver dispositivos ou se algum estiver offline, e relê a bateria.
 - Um monitor udev do subsistema `hidraw` pede uma varredura imediata quando algo é conectado ou removido.
 - Quando um dispositivo aparece ou volta, o daemon lê as capacidades e reaplica o perfil ativo (só escreve o que difere e só valores que o dispositivo anuncia).
-- A bateria vem do sysfs do kernel (`/sys/class/power_supply/hidpp_battery_*`, criado pelo driver `hid-logitech-hidpp`), não do HID++.
+- A bateria vem do sysfs do kernel (`/sys/class/power_supply/hidpp_battery_*`, criado pelo driver `hid-logitech-hidpp`), não do HID++, e é relida a cada ciclo (5 s). Para `BatteryLow`, um estado de carga desconhecido conta como descarregando.
 
 ## Verificado no hardware
 
@@ -188,11 +188,27 @@ Com o G703 LIGHTSPEED (receptor `046d:c539`) em 2026-10-12, commit `7696a89` (de
 ## Limitações da v1
 
 - **Um perfil global**: o perfil ativo vale para todos os dispositivos; não há perfil por dispositivo.
-- **Níveis de DPI são do host**: `dpi_levels` são presets guardados no `profiles.toml`; só o DPI ativo é escrito no mouse. Nada vai para a memória onboard do mouse; o botão de DPI do mouse continua alternando entre os níveis guardados no próprio mouse (na verificação, o botão levou o DPI a 3200, valor fora do perfil), e o daemon não desfaz essa mudança até reaplicar o perfil (por exemplo, ao reconectar).
-- **Bateria só em receptor com exatamente um dispositivo e uma bateria** no sysfs; caso contrário a bateria fica desconhecida (`-1`/`unknown`). Quando o dispositivo fica offline, a associação com a bateria só volta na próxima varredura bem-sucedida.
+- **Níveis de DPI são do host**: `dpi_levels` são presets guardados no `profiles.toml`; só o DPI ativo é escrito no mouse, e nada vai para a memória onboard. O botão de DPI do mouse muda o DPI por conta própria, sem passar pelo daemon (na verificação ele levou o DPI a 3200, valor fora do perfil). O daemon só volta ao DPI do perfil quando o aplica de novo: ao reconectar, em `ActivateProfile` ou numa chamada `Set*`.
+- **Bateria só em receptor com exatamente um dispositivo e uma bateria** no sysfs; caso contrário a bateria fica desconhecida (`-1`/`unknown`). A associação dispositivo↔bateria é mantida entre varreduras (uma varredura que falha não a apaga). Se o arquivo da bateria no sysfs não puder ser lido (por exemplo, com o dispositivo offline), a bateria aparece desconhecida.
+- **Dispositivos online não são sondados de novo**: a varredura pula os slots de quem já está conectado (as respostas da sonda chegariam também ao descritor do dispositivo). Antes de cada requisição HID++ o daemon descarta respostas velhas da fila.
+- **Só mouses com DPI e polling ajustáveis** (features `0x2201` e `0x8060`) são gerenciados; teclados e outros dispositivos do receptor são ignorados. Um dispositivo cujas capacidades não puderam ser lidas não é listado; ele é tentado de novo a cada ciclo e o erro vai para o log uma vez só.
+- **`profiles.toml` que não pôde ser copiado desativa o salvamento**: se o arquivo não pôde ser lido, ou se era inválido e não pôde ser movido para `profiles.toml.bak`, o daemon usa o perfil padrão em memória e recusa salvar até ser reiniciado (cada tentativa vai para o log).
 - **Mouse com fio** (sem receptor) ainda não é tratado; só os slots 1–6 de receptores são sondados.
 - **O índice `0xFF` do receptor não é sondado** (o próprio receptor não é gerenciado).
 - **Mouse dormindo aparece offline**: só é redetectado no ciclo de 5 s; depois de acordar pode levar até um ciclo mais o tempo da varredura para voltar. Se o daemon iniciar com o mouse dormindo, ele fica com 0 dispositivos até o mouse acordar.
 - **`ProfileChanged` em criar/apagar** traz o nome do perfil ativo (que não muda); clientes devem chamar `ListProfiles` de novo ao receber o sinal.
 - **Timeout não cancela**: um comando que estoura os 5 s devolve `Failed`, mas continua na fila do gerente e ainda pode ser aplicado depois.
-- Sem bandeja, notificação visual ou GUI ainda (planos seguintes); o limite de bateria baixa (15%) é fixo.
+- Sem bandeja, notificação visual ou GUI ainda (planos seguintes); o limite de bateria baixa é fixo na v1 (aviso em 15%, rearma em 20%).
+
+## Pendências para os Planos 3 e 4
+
+1. **Mouse cochilando**: quando o receptor responde `0x09`, o mouse aparece offline e perde a leitura da bateria. Criar um estado "dormindo" que mantém capacidades e bateria, sem `DevicesChanged` oscilando.
+2. **Reaplicação a cada despertar**: hoje todo despertar reaplica o perfil e desfaz o DPI escolhido pelo botão. Decidir entre reaplicar só depois de uma reconexão real ou mostrar "DPI do dispositivo difere do perfil".
+3. **Métodos D-Bus síncronos**: um comando lento bloqueia os outros clientes. Torná-los assíncronos; um cliente que recebe `Failed` por timeout deve considerar o estado desconhecido e reler em `DeviceChanged`/`ProfileChanged`.
+4. **Diagnóstico pelo D-Bus** (`Warnings()` + `WarningsChanged`): `profiles.toml` inválido, falta de permissão udev e falhas ao salvar.
+5. **Declarar os sinais no `#[interface]`** para que apareçam na introspecção.
+6. **Arquivo de ativação D-Bus** (`SystemdService=ghubd.service`) e "Sair e parar o serviço" usando `systemctl --user stop`.
+7. **Limite de bateria baixa configurável** (spec 5.3), ou calculado na bandeja.
+8. **Teste opcional somente leitura no hardware** (`--features hardware`, spec seção 9) ainda falta.
+9. **GUI**: validar o DPI contra `dpi_min`/`dpi_max`/`dpi_step`/`dpi_list`; tratar `dpi_current == 0` com o dispositivo conectado; esconder ou marcar fantasmas com `connected=false` (dispositivos nunca são removidos); reler a lista de perfis em `ProfileChanged` (criar/apagar trazem o nome do ativo).
+10. **Pendências menores conhecidas**: a primeira execução com 2+ dispositivos semeia só a partir do primeiro; o `.bak` é sobrescrito por uma segunda corrupção; o arquivo temporário fica para trás depois de um save que falhou e não há `fsync` do diretório; o monitor udev só termina depois do próximo evento udev; o script de instalação presume o `CARGO_TARGET_DIR` padrão; permissão negada vai para o log a cada varredura (registrar uma vez por nó e tipo de erro).
