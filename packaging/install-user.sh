@@ -1,13 +1,44 @@
 #!/usr/bin/env bash
 # Instala o ghubd para o usuário atual (sem sudo). Não habilita o serviço.
+#   --dry-run   só imprime o que seria feito
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
-cargo build --release -p ghubd --manifest-path "$root/Cargo.toml"
+DRY=0
+if [ "${1:-}" = "--dry-run" ]; then
+    DRY=1
+elif [ -n "${1:-}" ]; then
+    echo "uso: $0 [--dry-run]" >&2
+    exit 2
+fi
 
-install -Dm755 "$root/target/release/ghubd" "$HOME/.local/bin/ghubd"
-install -Dm644 "$root/packaging/systemd/ghubd.service" "$HOME/.config/systemd/user/ghubd.service"
-systemctl --user daemon-reload
+root="$(cd "$(dirname "$0")/.." && pwd)"
+bindir="$HOME/.local/bin"
+unitdir="$HOME/.config/systemd/user"
+dbusdir="$HOME/.local/share/dbus-1/services"
+
+run() {
+    if [ "$DRY" = 1 ]; then
+        echo "+ $*"
+    else
+        "$@"
+    fi
+}
+
+run cargo build --release -p ghubd --manifest-path "$root/Cargo.toml"
+run install -Dm755 "$root/target/release/ghubd" "$bindir/ghubd"
+run install -Dm644 "$root/packaging/systemd/ghubd.service" "$unitdir/ghubd.service"
+
+# O arquivo de ativação do D-Bus não expande variáveis: grava o caminho absoluto.
+if [ "$DRY" = 1 ]; then
+    echo "+ sed 's|@BINDIR@|$bindir|' $root/packaging/dbus/org.ghublinux.Daemon.service > $dbusdir/org.ghublinux.Daemon.service"
+else
+    mkdir -p "$dbusdir"
+    sed "s|@BINDIR@|$bindir|" "$root/packaging/dbus/org.ghublinux.Daemon.service" \
+        > "$dbusdir/org.ghublinux.Daemon.service"
+fi
+
+run systemctl --user daemon-reload
 
 echo "Instalado. Para iniciar agora:        systemctl --user start ghubd"
 echo "Para iniciar com a sessão (opcional): systemctl --user enable ghubd"
+echo "(ou use \"Iniciar com o sistema\" no menu da bandeja)"
