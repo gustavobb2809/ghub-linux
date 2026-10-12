@@ -161,8 +161,11 @@ impl ProfileStore {
     /// Lê o arquivo. Se faltar, devolve o padrão. Se for inválido, guarda uma cópia
     /// `.bak`, devolve o padrão e um aviso.
     pub fn load_or_default(path: &Path) -> (Self, Option<String>) {
-        match fs::read_to_string(path) {
-            Ok(text) => match Self::from_toml(&text) {
+        match fs::read(path) {
+            Ok(bytes) => match String::from_utf8(bytes)
+                .map_err(|_| ProfileError::Invalid("o arquivo não é UTF-8 válido".into()))
+                .and_then(|text| Self::from_toml(&text))
+            {
                 Ok(store) => (store, None),
                 Err(e) => {
                     let bak = path.with_extension("toml.bak");
@@ -424,6 +427,19 @@ mod tests {
             fs::read_to_string(dir.path().join("profiles.toml.bak")).unwrap(),
             "isto não é toml {{{"
         );
+    }
+
+    #[test]
+    fn non_utf8_file_is_backed_up_and_default_is_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.toml");
+        let bytes = [0xFFu8, 0xFE, 0x00, 0xC3, 0x28];
+        fs::write(&path, bytes).unwrap();
+        let (s, warning) = ProfileStore::load_or_default(&path);
+        assert!(s.needs_seed());
+        assert!(warning.unwrap().contains("profiles.toml.bak"));
+        assert!(!path.exists());
+        assert_eq!(fs::read(dir.path().join("profiles.toml.bak")).unwrap(), bytes);
     }
 
     #[test]
