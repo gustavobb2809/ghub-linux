@@ -6,5 +6,6 @@ pub mod mouse;
 pub mod profile;
 pub mod topology;
 pub mod manager;
+pub mod service;
 #[cfg(test)]
 mod testing;
