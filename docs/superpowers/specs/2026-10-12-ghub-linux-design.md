@@ -75,13 +75,14 @@ Responsabilidade: falar HID++ com dispositivos Logitech por `hidraw`.
 
 ### 5.2 `ghub-ipc`
 
-Interface D-Bus no barramento de sessão, nome `org.ghublinux.Daemon1`, objeto `/org/ghublinux/Daemon`:
+Interface D-Bus no barramento de sessão: nome de barramento `org.ghublinux.Daemon`, objeto `/org/ghublinux/Daemon`, interface `org.ghublinux.Daemon1` (API final; tipos e proxy em `crates/ghub-ipc`, referência completa em `docs/daemon.md`):
 
-- `Devices() -> a(sssbu)` (id, nome, modelo, conectado, bateria %)
-- `GetDeviceState(id) -> a{sv}` (DPI ativo, níveis, polling, perfil ativo)
-- `SetDpiLevels(id, au)` · `SetActiveDpiLevel(id, u)` · `SetPollingRate(id, u)`
-- `Profiles() -> as` · `ActivateProfile(name)` · `SaveProfile(name, a{sv})`
-- Sinais: `DeviceChanged(id)`, `DevicesChanged()`, `BatteryLow(id, u)`.
+- `Devices() -> a(ssbis)` — `DeviceSummary`: id, nome, conectado, bateria % (`-1` = desconhecida), estado da bateria
+- `GetDeviceState(s id) -> (ssbuauuuuuauuauiss)` — `DeviceState`: id, nome, conectado, DPI atual, níveis de DPI, nível ativo, DPI mín/máx/passo, lista de DPI, polling atual, pollings suportados, bateria %, estado da bateria, perfil ativo
+- `SetDpiLevels(s id, au levels, u active)` · `SetActiveDpiLevel(s id, u active)` · `SetPollingRate(s id, u hz)`
+- `ListProfiles() -> as` · `GetActiveProfile() -> s` · `ActivateProfile(s name)` · `CreateProfile(s name)` · `DeleteProfile(s name)` · `Rescan()`
+- Sinais: `DevicesChanged()`, `DeviceChanged(s id)`, `ProfileChanged(s name)`, `BatteryLow(s id, u percent)`.
+- Erros: `InvalidArgs` (valor inválido ou não suportado pelo dispositivo), `UnknownObject` (ID ou perfil inexistente), `Failed` (offline, falha HID++ ou sem resposta em 5 s).
 
 ### 5.3 `ghubd`
 
@@ -89,6 +90,10 @@ Interface D-Bus no barramento de sessão, nome `org.ghublinux.Daemon1`, objeto `
 - Mantém o estado desejado (perfil ativo) e o reaplica ao reconectar.
 - Perfis em TOML: `~/.config/ghub-linux/profiles.toml`. Escrita atômica (arquivo temporário + rename).
 - Expõe a interface D-Bus acima.
+- Uma única thread gerente faz todo o acesso a dispositivos e perfis; as chamadas D-Bus viram comandos para ela. Ciclo de 5 s: `ping` nos dispositivos conectados, nova varredura se houver algum offline (ou nenhum) e releitura da bateria; o udev só antecipa a varredura.
+- A bateria vem do sysfs do kernel (`hidpp_battery_*`), associada ao dispositivo só quando o receptor tem exatamente um dispositivo e uma bateria.
+- O perfil é global (vale para todos os dispositivos) na v1; os níveis de DPI ficam no host, só o DPI ativo é escrito no mouse.
+- Primeira execução (sem `profiles.toml`): o perfil é semeado com o DPI e o polling lidos do dispositivo, sem escrever nele.
 - **Bandeja**: StatusNotifierItem via crate `ksni` (Rust puro, sem Qt), então funciona com a GUI fechada e em Waybar, Quickshell e KDE.
   - Clique abre a GUI; menu de contexto: bateria/perfil, DPI, perfil, "Iniciar com o sistema", "Abrir", "Sair e parar o serviço".
   - Estados do ícone: normal, bateria baixa (ponto vermelho), carregando (raio), desconectado (esmaecido).

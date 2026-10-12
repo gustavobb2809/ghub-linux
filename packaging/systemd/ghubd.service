@@ -1,0 +1,12 @@
+[Unit]
+Description=ghub-linux daemon (dispositivos Logitech)
+
+[Service]
+Type=dbus
+BusName=org.ghublinux.Daemon
+ExecStart=%h/.local/bin/ghubd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

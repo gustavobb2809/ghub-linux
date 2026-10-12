@@ -1,0 +1,12 @@
+//! Lógica do daemon `ghubd`.
+
+pub mod backend;
+pub mod battery_sysfs;
+pub mod mouse;
+pub mod profile;
+pub mod topology;
+pub mod watcher;
+pub mod manager;
+pub mod service;
+#[cfg(test)]
+mod testing;
