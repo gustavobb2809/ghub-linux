@@ -8,6 +8,7 @@ pub mod mouse;
 pub mod notify;
 pub mod profile;
 pub mod topology;
+pub mod tray;
 pub mod tray_icon;
 pub mod tray_model;
 pub mod watcher;
