@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ghub_ipc::{DeviceState, DeviceSummary, BATTERY_UNKNOWN, STATE_UNKNOWN};
 use hidpp::features::dpi::DpiSupport;
@@ -198,14 +198,17 @@ impl<B: Backend> Manager<B> {
 
     // ----- mudanças -----
 
-    fn commit_profile_change(&mut self, idx: usize, candidate: Profile) {
+    /// Grava o perfil e o aplica. O perfil muda mesmo se a escrita no dispositivo falhar;
+    /// nesse caso o erro da escrita é devolvido a quem pediu.
+    fn commit_profile_change(&mut self, idx: usize, candidate: Profile) -> Result<(), ManagerError> {
         self.store.update_active(candidate);
         self.persist();
-        self.apply_to(idx);
+        let applied = self.apply_to(idx);
         let name = self.store.active_name().to_string();
         let id = self.devices[idx].id.clone();
         self.emit(Event::ProfileChanged(name));
         self.emit(Event::DeviceChanged(id));
+        applied
     }
 
     pub fn set_dpi_levels(&mut self, id: &str, levels: Vec<u16>, active: usize) -> Result<(), ManagerError> {
@@ -222,8 +225,7 @@ impl<B: Backend> Manager<B> {
                 )));
             }
         }
-        self.commit_profile_change(idx, candidate);
-        Ok(())
+        self.commit_profile_change(idx, candidate)
     }
 
     pub fn set_active_level(&mut self, id: &str, active: usize) -> Result<(), ManagerError> {
@@ -232,8 +234,7 @@ impl<B: Backend> Manager<B> {
         let mut candidate = self.store.active().clone();
         candidate.active_level = active;
         candidate.check_shape()?;
-        self.commit_profile_change(idx, candidate);
-        Ok(())
+        self.commit_profile_change(idx, candidate)
     }
 
     pub fn set_polling(&mut self, id: &str, hz: u16) -> Result<(), ManagerError> {
@@ -247,15 +248,16 @@ impl<B: Backend> Manager<B> {
         let mut candidate = self.store.active().clone();
         candidate.polling_hz = hz;
         candidate.check_shape()?;
-        self.commit_profile_change(idx, candidate);
-        Ok(())
+        self.commit_profile_change(idx, candidate)
     }
 
     pub fn activate_profile(&mut self, name: &str) -> Result<(), ManagerError> {
         self.store.activate(name)?;
         self.persist();
         for idx in 0..self.devices.len() {
-            self.apply_to(idx);
+            if let Err(e) = self.apply_to(idx) {
+                eprintln!("ghubd: {}: falha ao aplicar o perfil {name}: {e}", self.devices[idx].id);
+            }
         }
         self.emit(Event::ProfileChanged(name.to_string()));
         for id in self.devices.iter().filter(|d| d.mouse.is_some()).map(|d| d.id.clone()).collect::<Vec<_>>() {
@@ -280,16 +282,21 @@ impl<B: Backend> Manager<B> {
 
     /// Aplica o perfil ativo ao dispositivo, escrevendo apenas o que difere do estado atual
     /// e apenas valores que o dispositivo anunciou como suportados.
-    fn apply_to(&mut self, idx: usize) {
+    ///
+    /// Se uma escrita tentada falhar e o dispositivo não responder mais ao `ping`, ele é marcado
+    /// offline e o erro é `Offline`; se ainda responder, o erro é `Device`.
+    fn apply_to(&mut self, idx: usize) -> Result<(), ManagerError> {
         let profile = self.store.active().clone();
         let d = &mut self.devices[idx];
         let (Some(mouse), Some(caps)) = (d.mouse.as_mut(), d.caps.as_ref()) else {
-            return;
+            return Ok(());
         };
+        let mut failure: Option<String> = None;
         if caps.polling_hz.contains(&profile.polling_hz) {
             if mouse.read_polling_hz().ok() != Some(profile.polling_hz) {
                 if let Err(e) = mouse.set_polling_hz(profile.polling_hz) {
                     eprintln!("ghubd: falha ao definir o polling de {}: {e}", d.id);
+                    failure.get_or_insert(format!("falha ao definir o polling: {e}"));
                 }
             }
         } else {
@@ -300,11 +307,24 @@ impl<B: Backend> Manager<B> {
             if mouse.read_dpi().ok() != Some(dpi) {
                 if let Err(e) = mouse.set_dpi(dpi) {
                     eprintln!("ghubd: falha ao definir o DPI de {}: {e}", d.id);
+                    failure.get_or_insert(format!("falha ao definir o DPI: {e}"));
                 }
             }
         } else {
             eprintln!("ghubd: {} não suporta {dpi} DPI; ignorado", d.id);
         }
+        let Some(why) = failure else {
+            return Ok(());
+        };
+        if mouse.ping().is_ok() {
+            return Err(ManagerError::Device(why));
+        }
+        d.mouse = None;
+        d.caps = None;
+        let id = d.id.clone();
+        self.emit(Event::DeviceChanged(id.clone()));
+        self.emit(Event::DevicesChanged);
+        Err(ManagerError::Offline(id))
     }
 
     // ----- ciclo de vida dos dispositivos -----
@@ -333,8 +353,19 @@ impl<B: Backend> Manager<B> {
                     self.persist();
                 }
             }
+            if self.store.needs_seed() {
+                // Sem os valores atuais não há como semear; escrever o perfil padrão
+                // sobrescreveria a configuração do usuário. Tenta de novo no próximo `tick`.
+                let d = &mut self.devices[idx];
+                eprintln!("ghubd: {}: não foi possível ler DPI/polling para semear o perfil", d.id);
+                d.mouse = None;
+                d.caps = None;
+                return;
+            }
         }
-        self.apply_to(idx);
+        if let Err(e) = self.apply_to(idx) {
+            eprintln!("ghubd: {}: falha ao aplicar o perfil: {e}", self.devices[idx].id);
+        }
         let id = self.devices[idx].id.clone();
         self.emit(Event::DeviceChanged(id));
     }
@@ -375,7 +406,9 @@ impl<B: Backend> Manager<B> {
             let id = self.devices[idx].id.clone();
             let new = self.backend.battery(&id);
             let d = &mut self.devices[idx];
-            let changed = d.battery != new;
+            // Só porcentagem e estado contam como mudança; a tensão oscila a cada leitura.
+            let key = |b: &Option<BatteryInfo>| b.as_ref().map(|b| (b.percent, b.status));
+            let changed = key(&d.battery) != key(&new);
             d.battery = new.clone();
             let mut events = Vec::new();
             if let Some(b) = &new {
@@ -464,15 +497,21 @@ impl<B: Backend> Manager<B> {
         }
     }
 
-    /// Laço principal: atende comandos e executa `tick` quando fica `tick` sem comandos.
+    /// Laço principal: atende comandos e executa `tick` a cada `tick`, mesmo sob tráfego contínuo de comandos.
     pub fn run(mut self, commands: Receiver<Command>, tick: Duration) {
         self.rescan();
+        let mut next_tick = Instant::now() + tick;
         loop {
-            match commands.recv_timeout(tick) {
+            let wait = next_tick.saturating_duration_since(Instant::now());
+            match commands.recv_timeout(wait) {
                 Ok(Command::Shutdown) => break,
                 Ok(cmd) => self.handle(cmd),
-                Err(RecvTimeoutError::Timeout) => self.tick(),
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
+            }
+            if Instant::now() >= next_tick {
+                self.tick();
+                next_tick = Instant::now() + tick;
             }
         }
     }
@@ -749,5 +788,100 @@ mod tests {
         let (tx, crx) = channel();
         tx.send(Command::Shutdown).unwrap();
         m.run(crx, Duration::from_millis(10)); // retorna em vez de travar
+    }
+
+    #[test]
+    fn first_run_with_failed_reads_does_not_write_and_retries() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(ProfileStore::default_store(), 1200, 1000);
+        mouse.state().fail_reads = true;
+        m.rescan();
+        assert!(mouse.state().dpi_sets.is_empty());
+        assert!(mouse.state().polling_sets.is_empty());
+        assert!(!m.devices()[0].connected);
+        mouse.state().fail_reads = false;
+        m.tick();
+        assert_eq!(m.store.active().dpi_levels, vec![1200]);
+        assert_eq!(m.store.active().polling_hz, 1000);
+        assert!(m.devices()[0].connected);
+        assert!(mouse.state().dpi_sets.is_empty());
+        assert!(mouse.state().polling_sets.is_empty());
+    }
+
+    #[test]
+    fn write_failure_on_a_live_device_is_a_device_error() {
+        let (mut m, _rx, mouse, _b, dir) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        mouse.state().fail_writes = true;
+        assert!(matches!(
+            m.set_dpi_levels("dev-1", vec![400, 3200], 1),
+            Err(ManagerError::Device(_))
+        ));
+        assert_eq!(m.store.active().dpi_levels, vec![400, 3200]);
+        let saved = std::fs::read_to_string(dir.path().join("profiles.toml")).unwrap();
+        assert!(saved.contains("3200"));
+        assert!(m.devices()[0].connected);
+    }
+
+    #[test]
+    fn write_failure_on_a_dead_device_marks_it_offline() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        {
+            let mut s = mouse.state();
+            s.fail_writes = true;
+            s.fail_ping = true;
+        }
+        assert!(matches!(
+            m.set_dpi_levels("dev-1", vec![400, 3200], 1),
+            Err(ManagerError::Offline(_))
+        ));
+        assert!(!m.devices()[0].connected);
+    }
+
+    #[test]
+    fn run_ticks_even_under_command_traffic() {
+        let (m, events, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        let (ctx, crx) = channel();
+        let worker = std::thread::spawn(move || m.run(crx, Duration::from_millis(50)));
+        // Espera o rescan inicial.
+        loop {
+            match events.recv_timeout(Duration::from_secs(5)).unwrap() {
+                Event::DevicesChanged => break,
+                _ => continue,
+            }
+        }
+        drain(&events);
+        mouse.state().online = false;
+        let start = std::time::Instant::now();
+        while start.elapsed() < Duration::from_millis(400) {
+            let (tx, rx) = channel();
+            ctx.send(Command::ListProfiles(tx)).unwrap();
+            rx.recv().unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        ctx.send(Command::Shutdown).unwrap();
+        worker.join().unwrap();
+        assert!(drain(&events).contains(&Event::DevicesChanged));
+    }
+
+    #[test]
+    fn battery_voltage_jitter_is_not_a_change() {
+        let (mut m, rx, _mouse, bat, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        *bat.lock().unwrap() = battery(80, ChargeStatus::Discharging);
+        m.tick();
+        drain(&rx);
+        *bat.lock().unwrap() =
+            Some(BatteryInfo { percent: 80, status: ChargeStatus::Discharging, voltage_mv: Some(3895) });
+        m.tick();
+        assert!(!drain(&rx).contains(&Event::DeviceChanged("dev-1".into())));
+        *bat.lock().unwrap() =
+            Some(BatteryInfo { percent: 79, status: ChargeStatus::Discharging, voltage_mv: Some(3895) });
+        m.tick();
+        let changed = drain(&rx)
+            .into_iter()
+            .filter(|e| *e == Event::DeviceChanged("dev-1".into()))
+            .count();
+        assert_eq!(changed, 1);
     }
 }

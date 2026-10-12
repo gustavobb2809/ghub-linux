@@ -16,6 +16,12 @@ pub struct FakeState {
     pub caps: Capabilities,
     pub dpi_sets: Vec<u16>,
     pub polling_sets: Vec<u16>,
+    /// Com o mouse online, leituras falham.
+    pub fail_reads: bool,
+    /// Com o mouse online, escritas falham (e não são registradas).
+    pub fail_writes: bool,
+    /// Com o mouse online, `ping` falha.
+    pub fail_ping: bool,
 }
 
 #[derive(Clone)]
@@ -33,6 +39,9 @@ impl FakeMouse {
             },
             dpi_sets: Vec::new(),
             polling_sets: Vec::new(),
+            fail_reads: false,
+            fail_writes: false,
+            fail_ping: false,
         })))
     }
 
@@ -48,17 +57,17 @@ impl Mouse for FakeMouse {
 
     fn read_dpi(&mut self) -> MouseResult<u16> {
         let s = self.state();
-        if s.online { Ok(s.dpi) } else { Err(HidppError::Timeout) }
+        if s.online && !s.fail_reads { Ok(s.dpi) } else { Err(HidppError::Timeout) }
     }
 
     fn read_polling_hz(&mut self) -> MouseResult<u16> {
         let s = self.state();
-        if s.online { Ok(s.polling) } else { Err(HidppError::Timeout) }
+        if s.online && !s.fail_reads { Ok(s.polling) } else { Err(HidppError::Timeout) }
     }
 
     fn set_dpi(&mut self, dpi: u16) -> MouseResult<u16> {
         let mut s = self.state();
-        if !s.online {
+        if !s.online || s.fail_writes {
             return Err(HidppError::Timeout);
         }
         s.dpi = dpi;
@@ -68,7 +77,7 @@ impl Mouse for FakeMouse {
 
     fn set_polling_hz(&mut self, hz: u16) -> MouseResult<()> {
         let mut s = self.state();
-        if !s.online {
+        if !s.online || s.fail_writes {
             return Err(HidppError::Timeout);
         }
         s.polling = hz;
@@ -77,7 +86,8 @@ impl Mouse for FakeMouse {
     }
 
     fn ping(&mut self) -> MouseResult<()> {
-        if self.state().online { Ok(()) } else { Err(HidppError::Timeout) }
+        let s = self.state();
+        if s.online && !s.fail_ping { Ok(()) } else { Err(HidppError::Timeout) }
     }
 }
 
