@@ -26,17 +26,23 @@ impl GhubTray {
     }
 }
 
+/// O dbusmenu usa `_` para marcar a tecla de acesso: um `_` sozinho some e `__` vira `_`.
+/// Escapa o texto vindo do usuário (nomes de perfil, rótulos de DPI, nome do dispositivo).
+fn escape(text: &str) -> String {
+    text.replace('_', "__")
+}
+
 fn radio_options(labels: &[String]) -> Vec<RadioItem> {
     labels
         .iter()
-        .map(|l| RadioItem { label: l.clone(), ..Default::default() })
+        .map(|l| RadioItem { label: escape(l), ..Default::default() })
         .collect()
 }
 
 fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
     match entry {
         Entry::Info(text) => StandardItem {
-            label: text.clone(),
+            label: escape(text),
             enabled: false,
             ..Default::default()
         }
@@ -64,7 +70,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
             let tx = actions.clone();
             let names = labels.clone();
             SubMenu {
-                label: format!("Perfil: {}", labels.get(*selected).cloned().unwrap_or_default()),
+                label: format!("Perfil: {}", escape(labels.get(*selected).map_or("", String::as_str))),
                 submenu: vec![RadioGroup {
                     selected: *selected,
                     select: Box::new(move |_: &mut GhubTray, index| {
@@ -343,6 +349,57 @@ mod tests {
         t.activate(0, 0);
         assert_eq!(rx.try_recv().unwrap(), Action::OpenGui);
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn underscores_in_user_text_are_escaped_but_actions_keep_the_original() {
+        let (mut t, rx) = tray(view(vec![
+            Entry::Info("G_703 — 91 %".into()),
+            Entry::Dpi { labels: vec!["800_DPI".into()], selected: 0, enabled: true },
+            Entry::Profiles { labels: vec!["a_b".into(), "c".into()], selected: 0 },
+            Entry::OpenGui,
+        ]));
+        let menu = t.menu();
+        match &menu[0] {
+            MenuItem::Standard(i) => assert_eq!(i.label, "G__703 — 91 %"),
+            _ => panic!("esperava item informativo"),
+        }
+        match &menu[1] {
+            MenuItem::SubMenu(s) => {
+                assert_eq!(s.label, "DPI");
+                match &s.submenu[0] {
+                    MenuItem::RadioGroup(g) => assert_eq!(g.options[0].label, "800__DPI"),
+                    _ => panic!("esperava grupo de rádio"),
+                }
+            }
+            _ => panic!("esperava submenu de DPI"),
+        }
+        match &menu[2] {
+            MenuItem::SubMenu(s) => {
+                assert_eq!(s.label, "Perfil: a__b");
+                match &s.submenu[0] {
+                    MenuItem::RadioGroup(g) => {
+                        assert_eq!(g.options[0].label, "a__b");
+                        assert_eq!(g.options[1].label, "c");
+                        (g.select)(&mut t, 0);
+                    }
+                    _ => panic!("esperava grupo de rádio"),
+                }
+            }
+            _ => panic!("esperava submenu de perfil"),
+        }
+        assert_eq!(rx.try_recv().unwrap(), Action::ActivateProfile("a_b".into()));
+        match &menu[3] {
+            MenuItem::Standard(i) => assert_eq!(i.label, "Abrir G HUB Linux"),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn escape_doubles_every_underscore() {
+        assert_eq!(escape("a_b"), "a__b");
+        assert_eq!(escape("__x_"), "____x__");
+        assert_eq!(escape("sem sublinhado"), "sem sublinhado");
     }
 
     #[test]
