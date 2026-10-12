@@ -112,6 +112,14 @@ pub trait ServiceControl: Send + Sync {
     fn stop(&self) -> Result<bool, String>;
 }
 
+/// Texto de erro de uma falha do `systemctl`: o stderr aparado ou, se vazio, o status de saída.
+fn failure_text(stderr: &str, status: &str) -> String {
+    match stderr.trim() {
+        "" => format!("systemctl saiu com {status}"),
+        text => text.to_string(),
+    }
+}
+
 pub struct SystemctlControl;
 
 fn systemctl(args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -132,7 +140,7 @@ impl ServiceControl for SystemctlControl {
         if out.status.success() {
             Ok(())
         } else {
-            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+            Err(failure_text(&String::from_utf8_lossy(&out.stderr), &out.status.to_string()))
         }
     }
 
@@ -147,7 +155,7 @@ impl ServiceControl for SystemctlControl {
         if out.status.success() {
             Ok(true)
         } else {
-            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+            Err(failure_text(&String::from_utf8_lossy(&out.stderr), &out.status.to_string()))
         }
     }
 }
@@ -200,6 +208,13 @@ mod tests {
         assert!(runs_under_systemd(Some("abc123"), Some("4242"), 4242));
         assert!(!runs_under_systemd(Some(""), Some("4242"), 4242));
         assert!(!runs_under_systemd(None, Some("4242"), 4242));
+    }
+
+    #[test]
+    fn systemctl_failure_text_is_never_empty() {
+        assert_eq!(failure_text("  Unit ghubd.service not found.\n", "exit status: 1"), "Unit ghubd.service not found.");
+        assert_eq!(failure_text("", "exit status: 1"), "systemctl saiu com exit status: 1");
+        assert_eq!(failure_text(" \n\t", "exit status: 5"), "systemctl saiu com exit status: 5");
     }
 
     #[test]
