@@ -8,7 +8,7 @@ pub enum HidppError {
     Timeout,
     #[error("erro HID++ 2.0 0x{code:02x} na feature de índice 0x{feature_index:02x}")]
     Protocol { feature_index: u8, code: u8 },
-    #[error("erro HID++ 1.0 0x{code:02x} (dispositivo não fala HID++ 2.0)")]
+    #[error("erro HID++ 1.0 0x{code:02x}")]
     LegacyProtocol { code: u8 },
     #[error("o dispositivo não suporta a feature 0x{0:04x}")]
     FeatureNotSupported(u16),
@@ -27,3 +27,16 @@ impl From<std::io::Error> for HidppError {
 }
 
 pub type Result<T> = std::result::Result<T, HidppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_message_is_neutral() {
+        assert_eq!(
+            HidppError::LegacyProtocol { code: 8 }.to_string(),
+            "erro HID++ 1.0 0x08"
+        );
+    }
+}
