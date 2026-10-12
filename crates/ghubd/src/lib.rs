@@ -6,6 +6,7 @@ pub mod mouse;
 pub mod profile;
 pub mod topology;
 pub mod tray_icon;
+pub mod tray_model;
 pub mod watcher;
 pub mod manager;
 pub mod service;
