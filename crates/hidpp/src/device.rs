@@ -51,7 +51,8 @@ impl<T: Transport> Device<T> {
 
     /// Envia uma requisição e devolve os parâmetros da resposta correspondente.
     ///
-    /// Relatórios de outros dispositivos, notificações e lixo são ignorados.
+    /// Relatórios de outros dispositivos, notificações, lixo e erros de requisições
+    /// alheias (outra feature, função ou SW_ID) são ignorados.
     pub fn request(&mut self, feature_index: u8, function: u8, params: &[u8]) -> Result<Vec<u8>> {
         let req = Report::request(self.device_index, feature_index, function, params);
         self.transport.write(&req.encode()?)?;
@@ -71,10 +72,11 @@ impl<T: Transport> Device<T> {
                 continue;
             }
             if let Some(err) = resp.as_error() {
-                let ours = match err {
-                    HidppError::Protocol { feature_index, .. } => feature_index == req.feature_index,
-                    _ => true,
-                };
+                // Em ambos os formatos de erro, o byte 2 do relatório guarda o índice da
+                // feature (2.0) ou o SubID (1.0) da requisição, e o primeiro parâmetro o
+                // byte de função (com SW_ID) ou o endereço. Só é nosso se ambos baterem.
+                let ours = resp.function_byte == req.feature_index
+                    && resp.params.first() == Some(&req.function_byte);
                 if ours {
                     return Err(err);
                 }
@@ -193,6 +195,54 @@ mod tests {
                 feature_index: 4,
                 code: 2
             })
+        );
+    }
+
+    #[test]
+    fn request_skips_reply_with_foreign_sw_id() {
+        let mut fake = FakeTransport::new();
+        // Mesma feature e função, mas SW_ID 0x01 (o do driver do kernel).
+        fake.push_incoming(long_reply(1, 0x00, 0x11, &[9, 9, 9]));
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0xA5]));
+        let mut d = dev(fake);
+        let p = d.request(0x00, 1, &[0, 0, 0xA5]).unwrap();
+        assert_eq!(&p[..3], &[4, 2, 0xA5]);
+    }
+
+    #[test]
+    fn request_skips_foreign_hidpp2_errors() {
+        let mut fake = FakeTransport::new();
+        // Erro de outra feature.
+        fake.push_incoming(long_reply(1, 0xFF, 0x05, &[fb(2), 0x02]));
+        // Erro da mesma feature, mas de uma requisição do kernel (SW_ID 0x01).
+        fake.push_incoming(long_reply(1, 0xFF, 0x04, &[0x21, 0x02]));
+        // Erro da mesma feature, outra função nossa.
+        fake.push_incoming(long_reply(1, 0xFF, 0x04, &[fb(1), 0x02]));
+        fake.push_incoming(long_reply(1, 0x04, fb(2), &[7]));
+        let mut d = dev(fake);
+        assert_eq!(d.request(0x04, 2, &[]).unwrap()[0], 7);
+    }
+
+    #[test]
+    fn request_skips_foreign_hidpp1_errors() {
+        let mut fake = FakeTransport::new();
+        // Erro 1.0 da requisição do kernel (SW_ID 0x01) para o mesmo SubID.
+        fake.push_incoming(vec![0x10, 0x01, 0x8F, 0x00, 0x11, 0x01, 0x00]);
+        // Erro 1.0 para outro SubID.
+        fake.push_incoming(vec![0x10, 0x01, 0x8F, 0x83, 0xB5, 0x02, 0x00]);
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0xA5]));
+        let mut d = dev(fake);
+        assert_eq!(d.ping(), Ok((4, 2)));
+    }
+
+    #[test]
+    fn request_maps_matching_hidpp1_error_on_feature() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(vec![0x10, 0x01, 0x8F, 0x04, fb(2), 0x03, 0x00]);
+        let mut d = dev(fake);
+        assert_eq!(
+            d.request(0x04, 2, &[]),
+            Err(HidppError::LegacyProtocol { code: 3 })
         );
     }
 
