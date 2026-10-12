@@ -22,6 +22,8 @@ pub struct FakeState {
     pub fail_writes: bool,
     /// Com o mouse online, `ping` falha.
     pub fail_ping: bool,
+    /// Com o mouse online, `capabilities` falha (dispositivo sem DPI/polling utilizáveis).
+    pub fail_caps: bool,
 }
 
 #[derive(Clone)]
@@ -42,6 +44,7 @@ impl FakeMouse {
             fail_reads: false,
             fail_writes: false,
             fail_ping: false,
+            fail_caps: false,
         })))
     }
 
@@ -52,7 +55,11 @@ impl FakeMouse {
 
 impl Mouse for FakeMouse {
     fn capabilities(&mut self) -> MouseResult<Capabilities> {
-        Ok(self.state().caps.clone())
+        let s = self.state();
+        if s.online && s.fail_caps {
+            return Err(HidppError::Timeout);
+        }
+        Ok(s.caps.clone())
     }
 
     fn read_dpi(&mut self) -> MouseResult<u16> {

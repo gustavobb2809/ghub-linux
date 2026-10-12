@@ -5,6 +5,7 @@ use std::time::Duration;
 use hidpp::device::{Device, DEFAULT_TIMEOUT};
 use hidpp::features::device_name;
 use hidpp::hidraw::HidrawTransport;
+use hidpp::transport::Transport;
 
 use crate::battery_sysfs::{find_batteries, read_battery, BatteryInfo};
 use crate::mouse::{HidppMouse, Mouse};
@@ -75,6 +76,16 @@ impl Default for SysBackend {
     }
 }
 
+/// AdjustableDpi.
+const FEATURE_ADJUSTABLE_DPI: u16 = 0x2201;
+/// ReportRate.
+const FEATURE_REPORT_RATE: u16 = 0x8060;
+
+/// Só mouses com DPI e taxa de polling ajustáveis são gerenciados (teclados e afins não).
+pub fn is_supported_mouse<T: Transport>(dev: &Device<T>) -> bool {
+    dev.feature_index(FEATURE_ADJUSTABLE_DPI).is_ok() && dev.feature_index(FEATURE_REPORT_RATE).is_ok()
+}
+
 fn node_prefix(node: &HidNode) -> String {
     format!("{:04x}{:04x}-", node.vendor_id, node.product_id)
 }
@@ -94,6 +105,9 @@ fn probe_slot(node: &HidNode, slot: u8, skip: &[String]) -> Option<Found> {
     }
     dev.set_timeout(DEFAULT_TIMEOUT);
     dev.discover().ok()?;
+    if !is_supported_mouse(&dev) {
+        return None;
+    }
     let name = device_name::read(&mut dev).unwrap_or_else(|_| node.name.clone());
     Some(Found {
         id,
@@ -152,6 +166,19 @@ mod tests {
         assert_eq!(pairing(&two_ids, &bat), None);
         let two_bats = vec![PathBuf::from("/a"), PathBuf::from("/b")];
         assert_eq!(pairing(&ids, &two_bats), None);
+    }
+
+    #[test]
+    fn only_devices_with_dpi_and_polling_are_supported() {
+        use hidpp::transport::FakeTransport;
+        let dev = |ids: &[u16]| {
+            let map = ids.iter().enumerate().map(|(i, id)| (*id, i as u8 + 1)).collect();
+            Device::with_features(FakeTransport::new(), 1, map)
+        };
+        assert!(is_supported_mouse(&dev(&[0x0001, 0x2201, 0x8060])));
+        assert!(!is_supported_mouse(&dev(&[0x0001, 0x2201])));
+        assert!(!is_supported_mouse(&dev(&[0x0001, 0x8060])));
+        assert!(!is_supported_mouse(&dev(&[0x0001, 0x1b04, 0x4540])));
     }
 
     #[test]

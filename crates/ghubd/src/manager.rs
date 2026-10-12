@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
@@ -83,6 +84,18 @@ pub struct Manager<B: Backend> {
     store_path: PathBuf,
     events: Sender<Event>,
     devices: Vec<Managed>,
+    /// Ids cuja falha ao ler as capacidades já foi registrada no log (até dar certo).
+    caps_error_logged: HashSet<String>,
+}
+
+/// Resultado de `bring_online`.
+#[derive(Debug, PartialEq, Eq)]
+enum BringUp {
+    Online,
+    /// As capacidades não puderam ser lidas: não é (ainda) um mouse utilizável.
+    NoCapabilities,
+    /// Outro motivo (sem valores para semear, falha ao aplicar que o derrubou).
+    Offline,
 }
 
 fn battery_fields(b: &Option<BatteryInfo>) -> (i32, String) {
@@ -94,7 +107,14 @@ fn battery_fields(b: &Option<BatteryInfo>) -> (i32, String) {
 
 impl<B: Backend> Manager<B> {
     pub fn new(backend: B, store: ProfileStore, store_path: PathBuf, events: Sender<Event>) -> Self {
-        Manager { backend, store, store_path, events, devices: Vec::new() }
+        Manager {
+            backend,
+            store,
+            store_path,
+            events,
+            devices: Vec::new(),
+            caps_error_logged: HashSet::new(),
+        }
     }
 
     fn emit(&self, event: Event) {
@@ -330,20 +350,26 @@ impl<B: Backend> Manager<B> {
     // ----- ciclo de vida dos dispositivos -----
 
     /// Lê as capacidades, semeia o perfil na primeira execução e aplica o perfil ativo.
-    fn bring_online(&mut self, idx: usize) {
+    fn bring_online(&mut self, idx: usize) -> BringUp {
         let probe = {
             let Some(mouse) = self.devices[idx].mouse.as_mut() else {
-                return;
+                return BringUp::Offline;
             };
             (mouse.capabilities(), mouse.read_dpi(), mouse.read_polling_hz())
         };
         let (caps, dpi, hz) = probe;
         match caps {
-            Ok(c) => self.devices[idx].caps = Some(c),
+            Ok(c) => {
+                self.devices[idx].caps = Some(c);
+                self.caps_error_logged.remove(&self.devices[idx].id);
+            }
             Err(e) => {
-                eprintln!("ghubd: {}: não foi possível ler as capacidades: {e}", self.devices[idx].id);
+                let id = self.devices[idx].id.clone();
+                if self.caps_error_logged.insert(id.clone()) {
+                    eprintln!("ghubd: {id}: não foi possível ler as capacidades: {e} (tentando a cada ciclo)");
+                }
                 self.devices[idx].mouse = None;
-                return;
+                return BringUp::NoCapabilities;
             }
         }
         if self.store.needs_seed() {
@@ -360,7 +386,7 @@ impl<B: Backend> Manager<B> {
                 eprintln!("ghubd: {}: não foi possível ler DPI/polling para semear o perfil", d.id);
                 d.mouse = None;
                 d.caps = None;
-                return;
+                return BringUp::Offline;
             }
         }
         if let Err(e) = self.apply_to(idx) {
@@ -368,6 +394,11 @@ impl<B: Backend> Manager<B> {
         }
         let id = self.devices[idx].id.clone();
         self.emit(Event::DeviceChanged(id));
+        if self.devices[idx].mouse.is_some() {
+            BringUp::Online
+        } else {
+            BringUp::Offline
+        }
     }
 
     pub fn rescan(&mut self) {
@@ -378,12 +409,15 @@ impl<B: Backend> Manager<B> {
         let found = self.backend.scan(&online);
         let mut changed = false;
         for f in found {
-            let idx = match self.devices.iter().position(|d| d.id == f.id) {
+            match self.devices.iter().position(|d| d.id == f.id) {
                 Some(i) if self.devices[i].mouse.is_some() => continue,
                 Some(i) => {
                     self.devices[i].name = f.name;
                     self.devices[i].mouse = Some(f.mouse);
-                    i
+                    // Já listado: só conta como mudança se voltou de fato.
+                    if self.bring_online(i) == BringUp::Online {
+                        changed = true;
+                    }
                 }
                 None => {
                     self.devices.push(Managed {
@@ -394,11 +428,19 @@ impl<B: Backend> Manager<B> {
                         battery: None,
                         low_notified: false,
                     });
-                    self.devices.len() - 1
+                    let idx = self.devices.len() - 1;
+                    match self.bring_online(idx) {
+                        // Sem capacidades não é listado (nem vira fantasma offline);
+                        // é sondado de novo no próximo ciclo.
+                        BringUp::NoCapabilities => {
+                            self.devices.pop();
+                        }
+                        // Um mouse válido que ainda não pôde ser semeado fica listado,
+                        // offline; a entrada nova na lista é a mudança.
+                        BringUp::Online | BringUp::Offline => changed = true,
+                    }
                 }
-            };
-            self.bring_online(idx);
-            changed = true;
+            }
         }
         if changed {
             self.emit(Event::DevicesChanged);
@@ -866,6 +908,44 @@ mod tests {
         ctx.send(Command::Shutdown).unwrap();
         worker.join().unwrap();
         assert!(drain(&events).contains(&Event::DevicesChanged));
+    }
+
+    #[test]
+    fn device_without_usable_capabilities_is_not_listed_and_does_not_churn() {
+        let (mut m, rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        mouse.state().fail_caps = true;
+        for _ in 0..3 {
+            m.tick();
+        }
+        assert!(!drain(&rx).contains(&Event::DevicesChanged));
+        assert!(m.devices().is_empty());
+        // Falha transitória: assim que as capacidades respondem, entra no próximo tick.
+        mouse.state().fail_caps = false;
+        m.tick();
+        let changes = drain(&rx).into_iter().filter(|e| *e == Event::DevicesChanged).count();
+        assert_eq!(changes, 1);
+        assert_eq!(m.devices().len(), 1);
+        assert!(m.devices()[0].connected);
+    }
+
+    #[test]
+    fn known_device_failing_to_come_back_does_not_emit_devices_changed() {
+        let (mut m, rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        mouse.state().online = false;
+        m.tick();
+        drain(&rx);
+        {
+            let mut s = mouse.state();
+            s.online = true;
+            s.fail_caps = true;
+        }
+        for _ in 0..3 {
+            m.tick();
+        }
+        assert!(!drain(&rx).contains(&Event::DevicesChanged));
+        assert_eq!(m.devices().len(), 1);
+        assert!(!m.devices()[0].connected);
     }
 
     #[test]
