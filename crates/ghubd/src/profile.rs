@@ -112,6 +112,8 @@ pub struct ProfileStore {
     active: String,
     profiles: Vec<Profile>,
     needs_seed: bool,
+    /// O arquivo anterior não pôde ser lido ou guardado em `.bak`: salvar o apagaria.
+    persist_disabled: bool,
 }
 
 impl ProfileStore {
@@ -120,6 +122,7 @@ impl ProfileStore {
             active: DEFAULT_PROFILE.to_string(),
             profiles: vec![Profile::new(DEFAULT_PROFILE)],
             needs_seed: true,
+            persist_disabled: false,
         }
     }
 
@@ -147,6 +150,7 @@ impl ProfileStore {
             active: file.active,
             profiles: file.profile,
             needs_seed: false,
+            persist_disabled: false,
         })
     }
 
@@ -158,38 +162,58 @@ impl ProfileStore {
         toml::to_string_pretty(&file).expect("os perfis são serializáveis")
     }
 
-    /// Lê o arquivo. Se faltar, devolve o padrão. Se for inválido, guarda uma cópia
-    /// `.bak`, devolve o padrão e um aviso.
+    /// Lê o arquivo. Se faltar, devolve o padrão.
+    ///
+    /// Em qualquer outra falha (leitura, UTF-8, conteúdo) tenta mover o arquivo para `.bak`
+    /// e devolve o padrão e um aviso. Se o arquivo não pôde ser lido, ou não pôde ser movido,
+    /// salvar fica desativado: o arquivo do usuário nunca é sobrescrito sem cópia.
     pub fn load_or_default(path: &Path) -> (Self, Option<String>) {
-        match fs::read(path) {
+        let problem = match fs::read(path) {
             Ok(bytes) => match String::from_utf8(bytes)
                 .map_err(|_| ProfileError::Invalid("o arquivo não é UTF-8 válido".into()))
                 .and_then(|text| Self::from_toml(&text))
             {
-                Ok(store) => (store, None),
-                Err(e) => {
-                    let bak = path.with_extension("toml.bak");
-                    let _ = fs::rename(path, &bak);
-                    (
-                        Self::default_store(),
-                        Some(format!(
-                            "{} inválido ({e}); cópia em {}",
-                            path.display(),
-                            bak.display()
-                        )),
-                    )
-                }
+                Ok(store) => return (store, None),
+                Err(e) => (format!("{} inválido ({e})", path.display()), false),
             },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (Self::default_store(), None),
-            Err(e) => (
-                Self::default_store(),
-                Some(format!("não foi possível ler {}: {e}", path.display())),
-            ),
-        }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return (Self::default_store(), None);
+            }
+            Err(e) => (format!("não foi possível ler {} ({e})", path.display()), true),
+        };
+        let (what, read_failed) = problem;
+        let bak = path.with_extension("toml.bak");
+        let mut store = Self::default_store();
+        let warning = match fs::rename(path, &bak) {
+            Ok(()) if !read_failed => format!("{what}; cópia em {}", bak.display()),
+            Ok(()) => {
+                store.persist_disabled = true;
+                format!(
+                    "{what}; movido para {}; salvar desativado até reiniciar com um arquivo legível",
+                    bak.display()
+                )
+            }
+            Err(e) => {
+                store.persist_disabled = true;
+                format!(
+                    "{what}; não foi possível fazer a cópia em {} ({e}); salvar desativado",
+                    bak.display()
+                )
+            }
+        };
+        (store, Some(warning))
     }
 
     /// Escrita atômica: arquivo temporário, `fsync` e `rename`.
+    ///
+    /// Recusa sem tocar no disco quando o arquivo anterior não pôde ser guardado.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        if self.persist_disabled {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "salvar desativado: o arquivo de perfis anterior não pôde ser lido ou copiado para .bak",
+            ));
+        }
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -462,6 +486,88 @@ mod tests {
         let (back, warning) = ProfileStore::load_or_default(&path);
         assert_eq!(warning, None);
         assert_eq!(back.active().dpi_levels, vec![1200]);
+    }
+
+    fn is_root() -> bool {
+        // SAFETY: `geteuid` não tem pré-condições.
+        unsafe { libc::geteuid() == 0 }
+    }
+
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[test]
+    fn unreadable_file_disables_saving_and_is_never_overwritten() {
+        if is_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.toml");
+        let original = "active = \"meu\"\n# perfis do usuário\n";
+        fs::write(&path, original).unwrap();
+        set_mode(&path, 0o000);
+        if fs::read(&path).is_ok() {
+            set_mode(&path, 0o644);
+            return; // sem como simular a falha de leitura aqui
+        }
+        let (mut s, warning) = ProfileStore::load_or_default(&path);
+        assert!(s.needs_seed());
+        assert!(warning.is_some());
+        s.seed(1200, 1000);
+        assert!(s.save(&path).is_err());
+        let bak = dir.path().join("profiles.toml.bak");
+        for p in [&path, &bak] {
+            if p.exists() {
+                set_mode(p, 0o644);
+            }
+        }
+        let kept = fs::read_to_string(&path).ok().or_else(|| fs::read_to_string(&bak).ok());
+        assert_eq!(kept.as_deref(), Some(original));
+        if path.exists() {
+            assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        }
+    }
+
+    #[test]
+    fn corrupt_file_backed_up_can_still_be_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("profiles.toml");
+        fs::write(&path, "isto não é toml {{{").unwrap();
+        let (mut s, warning) = ProfileStore::load_or_default(&path);
+        assert!(warning.unwrap().contains("profiles.toml.bak"));
+        s.seed(1200, 1000);
+        s.save(&path).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("1200"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join("profiles.toml.bak")).unwrap(),
+            "isto não é toml {{{"
+        );
+    }
+
+    #[test]
+    fn corrupt_file_that_cannot_be_backed_up_disables_saving() {
+        if is_root() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("cfg");
+        fs::create_dir(&sub).unwrap();
+        let path = sub.join("profiles.toml");
+        fs::write(&path, "isto não é toml {{{").unwrap();
+        set_mode(&sub, 0o555);
+        let (mut s, warning) = ProfileStore::load_or_default(&path);
+        assert!(s.needs_seed());
+        assert!(warning.is_some());
+        // O diretório volta a aceitar escrita: só a própria store pode impedir o save.
+        set_mode(&sub, 0o755);
+        s.seed(1200, 1000);
+        let err = s.save(&path).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "isto não é toml {{{");
+        assert!(!sub.join("profiles.toml.bak").exists());
+        assert!(!sub.join("profiles.toml.tmp").exists());
     }
 
     #[test]
