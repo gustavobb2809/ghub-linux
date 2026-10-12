@@ -5,7 +5,7 @@
 - **Hardware:** receptor LIGHTSPEED `046d:c539` (`/dev/hidraw4`) + G703 LS `046d:4086` (`/dev/hidraw8`, provavelmente um nó virtual criado pelo `hid-logitech-dj` — inferência, não verificada)
 - **Permissão:** regra `docs/udev/70-ghub-linux.rules` instalada em `/etc/udev/rules.d/`
 
-## Saída completa
+## Saída completa (probe inicial, SW_ID 0x01)
 
 ```
 /dev/hidraw4  046d:c539  Logitech USB Receiver
@@ -68,7 +68,7 @@
 - **Nó que funcionou:** `/dev/hidraw4` (receptor `046d:c539`), **índice de dispositivo `0x01`**.
 - **Protocolo:** HID++ **4.2**.
 - **Outros índices no receptor (`0x02`–`0x06`, `0x00`):** erro HID++ 1.0 `0x08` (provavelmente sem dispositivo pareado nesse slot — inferência pelo conhecimento público do protocolo). `0xff` (o próprio receptor): erro HID++ 1.0 `0x01`, o que provavelmente indica que o receptor só fala HID++ 1.0 (inferência).
-- **Nó do mouse `/dev/hidraw8`:** o índice `0x01` responde ao ping (HID++ 4.2), mas `IRoot.getFeature(0x0001)` não devolve índice, então a listagem de features falha; os demais índices dão timeout. Para este hardware, usar o nó do receptor.
+- **Nó do mouse `/dev/hidraw8`:** no probe inicial (SW_ID 0x01) o índice `0x01` respondia ao ping, mas a listagem de features falhava. Com SW_ID 0x0E o nó do mouse também responde e descobre as features; ver "Re-probe com SW_ID 0x0E".
 
 ## Hipótese vs. observado
 
@@ -94,7 +94,8 @@
 
 - **Bateria:** preferir sysfs `/sys/class/power_supply/hidpp_battery_*` (`capacity`, `status`, `voltage_now`), ligado ao dispositivo pelo pai HID (`0003:046D:4086.*`); implementar `0x1001` em `hidpp` só como alternativa.
 - **Descoberta:** usar o nó do receptor (hidraw `046d:c539`) e os slots 1–6; classificar erros 1.0: `0x08` = slot vazio, `0x09` = dispositivo offline/dormindo, `0x01` no índice `0xFF` = receptor só fala HID++ 1.0 (códigos do conhecimento público, não verificados neste hardware); ouvir notificações 1.0 de conexão/desconexão para hotplug.
-- **Nó filho:** não dirigir features pelo nó filho do `hid-logitech-dj` (hidraw do mouse): só o ping responde; hipótese não verificada: o driver reescreve o índice. `list_logitech` lista nós filhos também; agrupar por pai no sysfs para não duplicar o mouse.
+- **Nó do mouse:** a falha anterior no nó próprio do mouse (`/dev/hidraw8`) era causada pela colisão de SW_ID 0x01 com o driver do kernel (tráfego/respostas do próprio kernel); com SW_ID 0x0E tanto o nó do receptor quanto o do mouse respondem e descobrem features. `list_logitech` lista os dois nós para o mesmo mouse: o daemon deve agrupá-los pelo pai no sysfs para não listar o mouse duas vezes e escolher um nó de forma determinística (preferir o do receptor).
+- **Índice 0xff do receptor:** com a atribuição estrita de erros 1.0, o ping ao índice `0xff` agora dá timeout em vez de devolver o erro 1.0; o eco no erro 1.0 do receptor tem layout diferente do eco dos slots vazios (`0x08`). Limitação conhecida: o plano do daemon deve classificar erros 1.0 pelo layout próprio ao falar com o receptor ou simplesmente não pingar `0xff` (desnecessário para a descoberta).
 - **Convivência com o driver do kernel** (`hid-logitech-hidpp` está ligado ao mesmo dispositivo): SW_ID próprio (`0x0E`) e filtro estrito de respostas.
 - **Modo com fio/direto:** tentar os índices `0xFF` e `0x00`.
 - **Tipos de relatório:** detectar pelo descriptor se há relatório curto (`0x10`) e forçar longo quando não houver.
@@ -102,3 +103,10 @@
 - **Transporte/Device para o daemon:** repetir `poll` no `EINTR` com o tempo restante; tratar `POLLERR`/`POLLHUP` e leitura de tamanho zero como erro de E/S; esvaziar entrada pendente antes de escrever; `discover` deve ignorar id 0 e considerar flags de feature oculta/engenharia.
 - **Validar antes de escrever:** DPI e polling contra `DpiSupport` e `supported_hz` antes de chamar `set`/`set_hz`.
 - **Regra udev:** cobre todos os nós hidraw Logitech (inclui teclados); restringir às interfaces HID++ se necessário.
+
+## Re-probe com SW_ID 0x0E
+
+- **Data:** 2026-10-12, HEAD `f55db21` (SW_ID `0x0E`, atribuição estrita de erros), `ghubctl probe` somente leitura.
+- **`/dev/hidraw4` (receptor):** índice `0x01` responde HID++ 4.2 com as mesmas features e valores (DPI atual 1200 / padrão 800, faixa 100–25600 passo 50; polling 1000 Hz, suportados 1000/500/250/125 Hz). Índices `0x02`–`0x06` e `0x00`: `erro HID++ 1.0 0x08`. Índice `0xff`: agora **timeout** (antes, com SW_ID 0x01 e atribuição frouxa, devolvia o erro 1.0 `0x01`).
+- **`/dev/hidraw8` (nó do próprio G703 LS):** **agora funciona**. Índice `0x01` responde HID++ 4.2 e a descoberta de features dá certo, com as mesmas features e os mesmos valores de DPI/polling; os demais índices dão timeout. Antes a busca de features falhava nesse nó.
+- **Bateria:** continua `o dispositivo não suporta a feature 0x1000` (esperado; o aparelho expõe `0x1001`).
