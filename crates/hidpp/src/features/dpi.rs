@@ -39,6 +39,10 @@ pub fn supported<T: Transport>(dev: &mut Device<T>, sensor: u8) -> Result<DpiSup
 /// Devolve `(dpi_atual, dpi_padrão)`.
 pub fn current<T: Transport>(dev: &mut Device<T>, sensor: u8) -> Result<(u16, u16)> {
     let p = dev.call(ADJUSTABLE_DPI, 2, &[sensor])?;
+    // Um relatório curto (0x10) traz só 3 parâmetros: falta o DPI padrão.
+    if p.len() < 5 {
+        return Err(HidppError::UnexpectedResponse("short DPI reply"));
+    }
     Ok((
         u16::from_be_bytes([p[1], p[2]]),
         u16::from_be_bytes([p[3], p[4]]),
@@ -113,6 +117,18 @@ mod tests {
         fake.push_incoming(long_reply(1, 2, 0x21, &[0, 0x06, 0x40, 0x03, 0x20]));
         let mut d = dev(fake);
         assert_eq!(current(&mut d, 0), Ok((1600, 800)));
+    }
+
+    #[test]
+    fn short_current_reply_is_unexpected() {
+        let mut fake = FakeTransport::new();
+        // Relatório curto: só 3 parâmetros, sem o DPI padrão.
+        fake.push_incoming(vec![0x10, 1, 2, 0x21, 0, 0x06, 0x40]);
+        let mut d = dev(fake);
+        assert_eq!(
+            current(&mut d, 0),
+            Err(HidppError::UnexpectedResponse("short DPI reply"))
+        );
     }
 
     #[test]
