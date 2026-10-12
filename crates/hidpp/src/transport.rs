@@ -50,3 +50,9 @@ pub fn long_reply(
     v.resize(20, 0);
     v
 }
+
+/// Byte de função como o enviamos: função no nibble alto, nosso `SW_ID` no baixo.
+#[cfg(test)]
+pub(crate) fn fb(function: u8) -> u8 {
+    (function << 4) | crate::report::SW_ID
+}

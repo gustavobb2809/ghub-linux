@@ -59,7 +59,7 @@ pub fn set<T: Transport>(dev: &mut Device<T>, sensor: u8, dpi: u16) -> Result<u1
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{long_reply, FakeTransport};
+    use crate::transport::{fb, long_reply, FakeTransport};
     use std::collections::HashMap;
 
     fn dev(fake: FakeTransport) -> Device<FakeTransport> {
@@ -97,8 +97,8 @@ mod tests {
     #[test]
     fn reads_supported_range_from_device() {
         let mut fake = FakeTransport::new();
-        // função 1 -> fbyte 0x11; params: [sensor, min, 0xE000|passo, max]
-        fake.push_incoming(long_reply(1, 2, 0x11, &[0, 0x00, 0xC8, 0xE0, 0x32, 0x64, 0x00]));
+        // função 1; params: [sensor, min, 0xE000|passo, max]
+        fake.push_incoming(long_reply(1, 2, fb(1), &[0, 0x00, 0xC8, 0xE0, 0x32, 0x64, 0x00]));
         let mut d = dev(fake);
         assert_eq!(
             supported(&mut d, 0),
@@ -113,8 +113,8 @@ mod tests {
     #[test]
     fn reads_current_and_default() {
         let mut fake = FakeTransport::new();
-        // função 2 -> fbyte 0x21; params: [sensor, atual(2), padrão(2)]
-        fake.push_incoming(long_reply(1, 2, 0x21, &[0, 0x06, 0x40, 0x03, 0x20]));
+        // função 2; params: [sensor, atual(2), padrão(2)]
+        fake.push_incoming(long_reply(1, 2, fb(2), &[0, 0x06, 0x40, 0x03, 0x20]));
         let mut d = dev(fake);
         assert_eq!(current(&mut d, 0), Ok((1600, 800)));
     }
@@ -123,7 +123,7 @@ mod tests {
     fn short_current_reply_is_unexpected() {
         let mut fake = FakeTransport::new();
         // Relatório curto: só 3 parâmetros, sem o DPI padrão.
-        fake.push_incoming(vec![0x10, 1, 2, 0x21, 0, 0x06, 0x40]);
+        fake.push_incoming(vec![0x10, 1, 2, fb(2), 0, 0x06, 0x40]);
         let mut d = dev(fake);
         assert_eq!(
             current(&mut d, 0),
@@ -134,11 +134,11 @@ mod tests {
     #[test]
     fn sets_dpi_and_returns_applied_value() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 2, 0x31, &[0, 0x0C, 0x80]));
+        fake.push_incoming(long_reply(1, 2, fb(3), &[0, 0x0C, 0x80]));
         let mut d = dev(fake);
         assert_eq!(set(&mut d, 0, 3200), Ok(3200));
         let t = d.into_transport();
-        assert_eq!(t.written[0], vec![0x10, 1, 2, 0x31, 0, 0x0C, 0x80]);
+        assert_eq!(t.written[0], vec![0x10, 1, 2, fb(3), 0, 0x0C, 0x80]);
     }
 
     #[test]

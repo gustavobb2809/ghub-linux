@@ -139,7 +139,7 @@ impl<T: Transport> Device<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{long_reply, FakeTransport};
+    use crate::transport::{fb, long_reply, FakeTransport};
 
     fn dev(fake: FakeTransport) -> Device<FakeTransport> {
         Device::new(fake, 1)
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn request_returns_matching_response() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 0x00, 0x11, &[4, 2, 0xA5]));
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0xA5]));
         let mut d = dev(fake);
         let p = d.request(0x00, 1, &[0, 0, 0xA5]).unwrap();
         assert_eq!(&p[..3], &[4, 2, 0xA5]);
@@ -159,7 +159,7 @@ mod tests {
         let mut fake = FakeTransport::new();
         // Notificação de outra feature (bateria) chega antes da resposta.
         fake.push_incoming(long_reply(1, 0x05, 0x00, &[77, 0, 0]));
-        fake.push_incoming(long_reply(1, 0x00, 0x11, &[4, 2, 0xA5]));
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0xA5]));
         let mut d = dev(fake);
         assert!(d.request(0x00, 1, &[0, 0, 0xA5]).is_ok());
     }
@@ -175,8 +175,8 @@ mod tests {
         let mut fake = FakeTransport::new();
         fake.push_incoming(vec![0x20, 0, 0]); // ID desconhecido
         fake.push_incoming(vec![0x11, 1]); // truncado
-        fake.push_incoming(long_reply(2, 0x00, 0x11, &[9, 9, 9])); // outro índice de dispositivo
-        fake.push_incoming(long_reply(1, 0x00, 0x11, &[4, 2, 0xA5]));
+        fake.push_incoming(long_reply(2, 0x00, fb(1), &[9, 9, 9])); // outro índice de dispositivo
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0xA5]));
         let mut d = dev(fake);
         let p = d.request(0x00, 1, &[0, 0, 0xA5]).unwrap();
         assert_eq!(&p[..3], &[4, 2, 0xA5]);
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn request_maps_hidpp2_error() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 0xFF, 0x04, &[0x21, 0x02]));
+        fake.push_incoming(long_reply(1, 0xFF, 0x04, &[fb(2), 0x02]));
         let mut d = dev(fake);
         assert_eq!(
             d.request(0x04, 2, &[]),
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn ping_returns_protocol_version() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 0x00, 0x11, &[4, 2, 0xA5]));
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0xA5]));
         let mut d = dev(fake);
         assert_eq!(d.ping(), Ok((4, 2)));
     }
@@ -207,7 +207,7 @@ mod tests {
     #[test]
     fn ping_reports_legacy_device() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(vec![0x10, 0x01, 0x8F, 0x00, 0x11, 0x01, 0x00]);
+        fake.push_incoming(vec![0x10, 0x01, 0x8F, 0x00, fb(1), 0x01, 0x00]);
         let mut d = dev(fake);
         assert_eq!(d.ping(), Err(HidppError::LegacyProtocol { code: 1 }));
     }
@@ -215,7 +215,7 @@ mod tests {
     #[test]
     fn ping_requires_echo() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 0x00, 0x11, &[4, 2, 0x00]));
+        fake.push_incoming(long_reply(1, 0x00, fb(1), &[4, 2, 0x00]));
         let mut d = dev(fake);
         assert_eq!(
             d.ping(),
@@ -227,12 +227,12 @@ mod tests {
     fn discover_maps_features_and_rejects_unknown() {
         let mut fake = FakeTransport::new();
         // IRoot.GetFeature(IFeatureSet) -> índice 1
-        fake.push_incoming(long_reply(1, 0x00, 0x01, &[1, 0, 0]));
+        fake.push_incoming(long_reply(1, 0x00, fb(0), &[1, 0, 0]));
         // IFeatureSet.GetCount -> 2 features além da IRoot
-        fake.push_incoming(long_reply(1, 0x01, 0x01, &[2]));
+        fake.push_incoming(long_reply(1, 0x01, fb(0), &[2]));
         // GetFeatureID(1) -> 0x1004; GetFeatureID(2) -> 0x2201
-        fake.push_incoming(long_reply(1, 0x01, 0x11, &[0x10, 0x04, 0]));
-        fake.push_incoming(long_reply(1, 0x01, 0x11, &[0x22, 0x01, 0]));
+        fake.push_incoming(long_reply(1, 0x01, fb(1), &[0x10, 0x04, 0]));
+        fake.push_incoming(long_reply(1, 0x01, fb(1), &[0x22, 0x01, 0]));
         let mut d = dev(fake);
         d.discover().unwrap();
         assert_eq!(d.feature_index(0x1004), Ok(1));

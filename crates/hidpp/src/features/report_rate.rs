@@ -33,7 +33,7 @@ pub fn set_hz<T: Transport>(dev: &mut Device<T>, hz: u16) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{long_reply, FakeTransport};
+    use crate::transport::{fb, long_reply, FakeTransport};
     use std::collections::HashMap;
 
     fn dev(fake: FakeTransport) -> Device<FakeTransport> {
@@ -43,7 +43,7 @@ mod tests {
     #[test]
     fn lists_supported_rates() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 4, 0x01, &[0b1000_1011]));
+        fake.push_incoming(long_reply(1, 4, fb(0), &[0b1000_1011]));
         let mut d = dev(fake);
         assert_eq!(supported_hz(&mut d), Ok(vec![1000, 500, 250, 125]));
     }
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn reads_current_rate() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 4, 0x11, &[1]));
+        fake.push_incoming(long_reply(1, 4, fb(1), &[1]));
         let mut d = dev(fake);
         assert_eq!(current_hz(&mut d), Ok(1000));
     }
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn zero_interval_is_unexpected() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 4, 0x11, &[0]));
+        fake.push_incoming(long_reply(1, 4, fb(1), &[0]));
         let mut d = dev(fake);
         assert_eq!(
             current_hz(&mut d),
@@ -70,11 +70,11 @@ mod tests {
     #[test]
     fn sets_rate_as_interval() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 4, 0x21, &[2]));
+        fake.push_incoming(long_reply(1, 4, fb(2), &[2]));
         let mut d = dev(fake);
         set_hz(&mut d, 500).unwrap();
         let t = d.into_transport();
-        assert_eq!(t.written[0], vec![0x10, 1, 4, 0x21, 2, 0, 0]);
+        assert_eq!(t.written[0], vec![0x10, 1, 4, fb(2), 2, 0, 0]);
     }
 
     #[test]

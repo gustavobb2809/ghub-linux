@@ -60,7 +60,7 @@ pub fn read<T: Transport>(dev: &mut Device<T>) -> Result<Battery> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transport::{long_reply, FakeTransport};
+    use crate::transport::{fb, long_reply, FakeTransport};
     use std::collections::HashMap;
 
     fn dev(features: &[(u16, u8)], fake: FakeTransport) -> Device<FakeTransport> {
@@ -71,7 +71,7 @@ mod tests {
     fn reads_unified_battery() {
         let mut fake = FakeTransport::new();
         // feature 0x1004 no índice 1, função 1 (GetStatus): [soc, nível, carga, externa]
-        fake.push_incoming(long_reply(1, 1, 0x11, &[80, 0b0010, 0, 0]));
+        fake.push_incoming(long_reply(1, 1, fb(1), &[80, 0b0010, 0, 0]));
         let mut d = dev(&[(UNIFIED_BATTERY, 1)], fake);
         assert_eq!(
             read(&mut d),
@@ -86,7 +86,7 @@ mod tests {
     fn unified_battery_charging_and_full() {
         for (code, expected) in [(1u8, ChargeState::Charging), (2, ChargeState::Charging), (3, ChargeState::Full)] {
             let mut fake = FakeTransport::new();
-            fake.push_incoming(long_reply(1, 1, 0x11, &[50, 0, code, 0]));
+            fake.push_incoming(long_reply(1, 1, fb(1), &[50, 0, code, 0]));
             let mut d = dev(&[(UNIFIED_BATTERY, 1)], fake);
             assert_eq!(read(&mut d).unwrap().state, expected);
         }
@@ -96,7 +96,7 @@ mod tests {
     fn falls_back_to_battery_status() {
         let mut fake = FakeTransport::new();
         // feature 0x1000 no índice 3, função 0: [nível, próximo nível, status]
-        fake.push_incoming(long_reply(1, 3, 0x01, &[55, 40, 1]));
+        fake.push_incoming(long_reply(1, 3, fb(0), &[55, 40, 1]));
         let mut d = dev(&[(BATTERY_STATUS, 3)], fake);
         assert_eq!(
             read(&mut d),
@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn out_of_range_percent_becomes_none() {
         let mut fake = FakeTransport::new();
-        fake.push_incoming(long_reply(1, 1, 0x11, &[200, 0, 0, 0]));
+        fake.push_incoming(long_reply(1, 1, fb(1), &[200, 0, 0, 0]));
         let mut d = dev(&[(UNIFIED_BATTERY, 1)], fake);
         assert_eq!(read(&mut d).unwrap().percent, None);
     }

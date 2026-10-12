@@ -5,7 +5,10 @@ pub const REPORT_LONG: u8 = 0x11;
 pub const SHORT_LEN: usize = 7;
 pub const LONG_LEN: usize = 20;
 /// ID de software enviado nas requisições (nibble baixo do byte de função; nunca 0).
-pub const SW_ID: u8 = 0x01;
+///
+/// O driver do kernel (`hid-logitech-hidpp`), ligado ao mesmo dispositivo, usa 0x01;
+/// um valor próprio evita confundir as respostas dele com as nossas.
+pub const SW_ID: u8 = 0x0E;
 
 const HIDPP2_ERROR_INDEX: u8 = 0xFF;
 const HIDPP1_ERROR_INDEX: u8 = 0x8F;
@@ -93,6 +96,7 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::fb;
 
     fn padded(mut v: Vec<u8>, len: usize) -> Vec<u8> {
         v.resize(len, 0);
@@ -100,11 +104,17 @@ mod tests {
     }
 
     #[test]
+    fn sw_id_differs_from_kernel_driver() {
+        assert_eq!(SW_ID, 0x0E);
+        assert_eq!(Report::request(1, 0, 1, &[]).function_byte, 0x1E);
+    }
+
+    #[test]
     fn encodes_short_request() {
         let r = Report::request(0x01, 0x00, 1, &[0x00, 0x00, 0xA5]);
         assert_eq!(
             r.encode().unwrap(),
-            vec![0x10, 0x01, 0x00, 0x11, 0x00, 0x00, 0xA5]
+            vec![0x10, 0x01, 0x00, fb(1), 0x00, 0x00, 0xA5]
         );
     }
 
@@ -114,7 +124,7 @@ mod tests {
         let out = r.encode().unwrap();
         assert_eq!(out.len(), 20);
         assert_eq!(out[0], 0x11);
-        assert_eq!(&out[..8], &[0x11, 0x01, 0x02, 0x31, 1, 2, 3, 4]);
+        assert_eq!(&out[..8], &[0x11, 0x01, 0x02, fb(3), 1, 2, 3, 4]);
     }
 
     #[test]
@@ -128,12 +138,12 @@ mod tests {
 
     #[test]
     fn decode_long_roundtrip() {
-        let raw = padded(vec![0x11, 0x02, 0x05, 0x21, 9, 8, 7], 20);
+        let raw = padded(vec![0x11, 0x02, 0x05, fb(2), 9, 8, 7], 20);
         let r = Report::decode(&raw).unwrap();
         assert_eq!(r.device_index, 0x02);
         assert_eq!(r.feature_index, 0x05);
         assert_eq!(r.function(), 2);
-        assert_eq!(r.sw_id(), 1);
+        assert_eq!(r.sw_id(), SW_ID);
         assert_eq!(&r.params[..3], &[9, 8, 7]);
         assert_eq!(r.params.len(), 16);
     }
@@ -156,7 +166,7 @@ mod tests {
 
     #[test]
     fn classifies_hidpp2_error() {
-        let raw = padded(vec![0x11, 0x01, 0xFF, 0x04, 0x21, 0x05], 20);
+        let raw = padded(vec![0x11, 0x01, 0xFF, 0x04, fb(2), 0x05], 20);
         let r = Report::decode(&raw).unwrap();
         assert_eq!(
             r.as_error(),
@@ -169,13 +179,13 @@ mod tests {
 
     #[test]
     fn classifies_legacy_error() {
-        let r = Report::decode(&[0x10, 0x01, 0x8F, 0x00, 0x11, 0x01, 0x00]).unwrap();
+        let r = Report::decode(&[0x10, 0x01, 0x8F, 0x00, fb(1), 0x01, 0x00]).unwrap();
         assert_eq!(r.as_error(), Some(HidppError::LegacyProtocol { code: 1 }));
     }
 
     #[test]
     fn normal_report_is_not_an_error() {
-        let r = Report::decode(&[0x10, 0x01, 0x04, 0x11, 0, 0, 0]).unwrap();
+        let r = Report::decode(&[0x10, 0x01, 0x04, fb(1), 0, 0, 0]).unwrap();
         assert_eq!(r.as_error(), None);
     }
 }
