@@ -38,17 +38,25 @@ pub fn run_fanout(
     notifier: &dyn Notifier,
 ) {
     for event in events {
-        if let Event::BatteryLow { id, percent } = &event {
-            let name = link
-                .devices()
-                .into_iter()
-                .find(|d| d.id == *id)
-                .map(|d| d.name)
-                .unwrap_or_else(|| id.clone());
-            notifier.notify(&Notification::battery_low(&name, *percent));
-        }
+        let notification = match &event {
+            Event::BatteryLow { id, percent } => {
+                let name = link
+                    .devices()
+                    .into_iter()
+                    .find(|d| d.id == *id)
+                    .map(|d| d.name)
+                    .unwrap_or_else(|| id.clone());
+                Some(Notification::battery_low(&name, *percent))
+            }
+            _ => None,
+        };
+        // Primeiro o sinal e a bandeja: a notificação é uma chamada D-Bus bloqueante sem
+        // prazo (um servidor de notificações ausente ou travado pode levar ~25 s).
         let _ = to_dbus.send(event);
         let _ = to_tray.send(Wake);
+        if let Some(n) = notification {
+            notifier.notify(&n);
+        }
     }
 }
 
@@ -104,7 +112,7 @@ mod tests {
     use crate::tray_icon::IconState;
     use crate::tray_model::{Autostart, Entry};
     use std::sync::mpsc::channel;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::thread;
 
     #[test]
@@ -154,6 +162,43 @@ mod tests {
         let sent = notifier.sent();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].body, "Mouse dev-1: 12 %");
+    }
+
+    /// Notificador que, no momento em que é chamado, verifica se o evento já foi repassado ao
+    /// D-Bus e se a bandeja já foi acordada (a notificação real pode bloquear por segundos).
+    struct OrderCheckingNotifier {
+        dbus: Mutex<Receiver<Event>>,
+        wake: Mutex<Receiver<Wake>>,
+        checks: Mutex<Vec<bool>>,
+    }
+
+    impl Notifier for OrderCheckingNotifier {
+        fn notify(&self, _n: &Notification) {
+            let forwarded = matches!(
+                self.dbus.lock().unwrap().try_recv(),
+                Ok(Event::BatteryLow { .. })
+            );
+            let woken = self.wake.lock().unwrap().try_recv().is_ok();
+            self.checks.lock().unwrap().push(forwarded && woken);
+        }
+    }
+
+    #[test]
+    fn fanout_forwards_the_event_before_the_blocking_notification() {
+        let link = FakeLink::default();
+        *link.devices.lock().unwrap() = vec![sample_summary("dev-1", true)];
+        let (ev_tx, ev_rx) = channel();
+        let (dbus_tx, dbus_rx) = channel();
+        let (wake_tx, wake_rx) = channel();
+        let notifier = OrderCheckingNotifier {
+            dbus: Mutex::new(dbus_rx),
+            wake: Mutex::new(wake_rx),
+            checks: Mutex::new(Vec::new()),
+        };
+        ev_tx.send(Event::BatteryLow { id: "dev-1".into(), percent: 12 }).unwrap();
+        drop(ev_tx);
+        run_fanout(ev_rx, dbus_tx, wake_tx, &link, &notifier);
+        assert_eq!(*notifier.checks.lock().unwrap(), vec![true]);
     }
 
     #[test]
