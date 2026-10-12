@@ -1,4 +1,5 @@
 pub mod battery;
+pub mod device_name;
 pub mod dpi;
 pub mod report_rate;
 

@@ -111,7 +111,11 @@ impl<T: Transport> Device<T> {
         map.insert(FEATURE_SET, set_index);
         for index in 1..=count {
             let p = self.request(set_index, 1, &[index])?;
-            map.insert(u16::from_be_bytes([p[0], p[1]]), index);
+            let id = u16::from_be_bytes([p[0], p[1]]);
+            if id == 0 {
+                continue;
+            }
+            map.insert(id, index);
         }
         self.features = map;
         Ok(())
@@ -292,6 +296,18 @@ mod tests {
             Err(HidppError::FeatureNotSupported(0x8060))
         );
         assert_eq!(d.features(), vec![(0x0001, 1), (0x1004, 1), (0x2201, 2)]);
+    }
+
+    #[test]
+    fn discover_ignores_feature_id_zero() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 0x00, fb(0), &[1, 0, 0]));
+        fake.push_incoming(long_reply(1, 0x01, fb(0), &[2]));
+        fake.push_incoming(long_reply(1, 0x01, fb(1), &[0x00, 0x00, 0]));
+        fake.push_incoming(long_reply(1, 0x01, fb(1), &[0x22, 0x01, 0]));
+        let mut d = dev(fake);
+        d.discover().unwrap();
+        assert_eq!(d.features(), vec![(0x0001, 1), (0x2201, 2)]);
     }
 
     #[test]

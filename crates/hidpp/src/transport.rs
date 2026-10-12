@@ -52,7 +52,7 @@ pub fn long_reply(
 }
 
 /// Byte de função como o enviamos: função no nibble alto, nosso `SW_ID` no baixo.
-#[cfg(test)]
-pub(crate) fn fb(function: u8) -> u8 {
+/// Público para que os testes de outros crates montem respostas do dispositivo.
+pub fn fb(function: u8) -> u8 {
     (function << 4) | crate::report::SW_ID
 }
