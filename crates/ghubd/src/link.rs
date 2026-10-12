@@ -94,16 +94,21 @@ pub fn parse_is_enabled(stdout: &str) -> Autostart {
     }
 }
 
-/// O systemd define `INVOCATION_ID` para os processos que ele inicia.
-pub fn runs_under_systemd(invocation_id: Option<&str>) -> bool {
+/// Diz se este processo é o processo principal da unidade do systemd. O systemd define
+/// `INVOCATION_ID` e `SYSTEMD_EXEC_PID` para o processo que ele inicia, mas `INVOCATION_ID`
+/// é herdado por tudo o que for lançado de dentro de uma unidade (terminal, compositor…);
+/// por isso exige também que `SYSTEMD_EXEC_PID` seja o PID deste processo.
+pub fn runs_under_systemd(invocation_id: Option<&str>, exec_pid: Option<&str>, own_pid: u32) -> bool {
     invocation_id.is_some_and(|v| !v.is_empty())
+        && exec_pid.and_then(|p| p.trim().parse::<u32>().ok()) == Some(own_pid)
 }
 
 pub trait ServiceControl: Send + Sync {
     fn autostart(&self) -> Autostart;
     fn set_autostart(&self, enable: bool) -> Result<(), String>;
-    /// Para o serviço. `Ok(true)`: pediu ao systemd (o processo receberá SIGTERM);
-    /// `Ok(false)`: o daemon não roda como serviço, quem chama deve encerrar por conta própria.
+    /// Para o serviço. `Ok(true)`: pediu ao systemd (o systemd encerra o processo);
+    /// `Ok(false)`: este processo não é o processo principal do serviço, quem chama deve
+    /// encerrar por conta própria.
     fn stop(&self) -> Result<bool, String>;
 }
 
@@ -133,7 +138,8 @@ impl ServiceControl for SystemctlControl {
 
     fn stop(&self) -> Result<bool, String> {
         let id = std::env::var("INVOCATION_ID").ok();
-        if !runs_under_systemd(id.as_deref()) {
+        let exec_pid = std::env::var("SYSTEMD_EXEC_PID").ok();
+        if !runs_under_systemd(id.as_deref(), exec_pid.as_deref(), std::process::id()) {
             return Ok(false);
         }
         let out = systemctl(&["stop", "--no-block", UNIT])
@@ -191,9 +197,19 @@ mod tests {
 
     #[test]
     fn detects_when_running_under_systemd() {
-        assert!(runs_under_systemd(Some("abc123")));
-        assert!(!runs_under_systemd(Some("")));
-        assert!(!runs_under_systemd(None));
+        assert!(runs_under_systemd(Some("abc123"), Some("4242"), 4242));
+        assert!(!runs_under_systemd(Some(""), Some("4242"), 4242));
+        assert!(!runs_under_systemd(None, Some("4242"), 4242));
+    }
+
+    #[test]
+    fn an_inherited_invocation_id_is_not_enough() {
+        // Iniciado à mão a partir de um terminal/compositor que roda numa unidade do systemd.
+        assert!(!runs_under_systemd(Some("abc123"), None, 4242));
+        assert!(!runs_under_systemd(Some("abc123"), Some("1000"), 4242));
+        assert!(!runs_under_systemd(Some("abc123"), Some("lixo"), 4242));
+        assert!(!runs_under_systemd(Some("abc123"), Some(""), 4242));
+        assert!(!runs_under_systemd(None, None, 4242));
     }
 
     fn running_link() -> (ChannelLink, Sender<Command>, thread::JoinHandle<()>, tempfile::TempDir) {
