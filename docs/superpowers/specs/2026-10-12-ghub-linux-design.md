@@ -100,6 +100,7 @@ Interface D-Bus no barramento de sessão: nome de barramento `org.ghublinux.Daem
 - **Iniciar com o sistema**: o item do menu e a opção em Configurações habilitam/desabilitam `ghubd.service` do usuário (`systemctl --user enable|disable`). Só o daemon inicia com a sessão; a GUI abre sob demanda.
 - Notificação de bateria baixa (limite configurável, padrão 15%).
 - Fecha a janela da GUI sem parar o daemon.
+- **Implementação (Plano 3)**: a bandeja roda dentro do daemon (`ksni`) e, sem host no ar, espera o `StatusNotifierWatcher` aparecer. Notificações via `org.freedesktop.Notifications` (bateria baixa, erros das ações; `ghubd --notify-test`). "Iniciar com o sistema" alterna `systemctl --user enable|disable ghubd.service`; o arquivo de ativação D-Bus (`SystemdService=ghubd.service`) inicia o daemon sob demanda (o instalador pede `ReloadConfig` ao barramento). Para hosts que só releem o menu em momentos específicos (ex.: Quickshell): atualização otimista no clique, espera de até 800 ms pelo menu reconstruído e um marcador de layout invisível que força `LayoutUpdated`. Detalhes em `docs/daemon.md`.
 
 ### 5.4 `ghub-gui`
 

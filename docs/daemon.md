@@ -16,12 +16,14 @@ Instalação para o usuário atual (sem `sudo`):
 packaging/install-user.sh
 ```
 
-O script compila em modo release, instala o binário em `~/.local/bin/ghubd` e a unit em `~/.config/systemd/user/ghubd.service` e roda `systemctl --user daemon-reload`. Ele **não** habilita nem inicia o serviço:
+O script compila em modo release e instala o binário em `~/.local/bin/ghubd`, a unit em `~/.config/systemd/user/ghubd.service` e o arquivo de ativação do D-Bus em `~/.local/share/dbus-1/services/org.ghublinux.Daemon.service`. Depois roda `systemctl --user daemon-reload` e pede ao barramento de sessão que releia a configuração (ver "Iniciar com o sistema e ativação sob demanda"). Ele **não** habilita nem inicia o serviço:
 
 ```bash
 systemctl --user start ghubd    # inicia agora
 systemctl --user enable ghubd   # inicia com a sessão (opcional)
 ```
+
+`packaging/install-user.sh --dry-run` só imprime os comandos (linhas `+ ...`) e termina com `(simulação: nada foi alterado)`; qualquer outro argumento mostra o uso e sai com código 2.
 
 A unit é `Type=dbus` com `BusName=org.ghublinux.Daemon` e `Restart=on-failure`.
 
@@ -174,6 +176,69 @@ busctl --user call $D Rescan
 - Quando um dispositivo aparece ou volta, o daemon lê as capacidades e reaplica o perfil ativo (só escreve o que difere e só valores que o dispositivo anuncia).
 - A bateria vem do sysfs do kernel (`/sys/class/power_supply/hidpp_battery_*`, criado pelo driver `hid-logitech-hidpp`), não do HID++, e é relida a cada ciclo (5 s). Para `BatteryLow`, um estado de carga desconhecido conta como descarregando.
 
+## Bandeja
+
+O daemon publica um ícone na bandeja (StatusNotifierItem, via crate `ksni`, sem Qt) e funciona com a GUI fechada. Se nenhum host estiver no ar (login antes do shell), ele espera o `StatusNotifierWatcher` aparecer; se a bandeja falhar de vez, o daemon segue sem ela. Código: `crates/ghubd/src/tray.rs` (integração com o `ksni`), `tray_model.rs` (o que o menu mostra), `tray_icon.rs` (ícone) e `hub.rs` (atualização).
+
+### Menu
+
+| Item | Significado |
+|---|---|
+| `<nome> — <bateria>` | Linha informativa do dispositivo principal (o primeiro conectado, senão o primeiro da lista): bateria em %, "(carregando)", "(carga completa)" ou "bateria desconhecida". Sem dispositivos: "Nenhum dispositivo encontrado". |
+| `<dpi> DPI · <hz> Hz` | DPI e polling lidos do mouse agora. Com o mouse offline vira "Inativo ou dormindo". |
+| DPI ▸ | Níveis de DPI do perfil ativo (rádio); escolher um chama `SetActiveDpiLevel` no dispositivo principal. Desabilitado com o mouse offline. |
+| Perfil: `<nome>` ▸ | Perfis (rádio); escolher um ativa o perfil. |
+| Iniciar com o sistema | ✓ quando `ghubd.service` está habilitado. Desabilitado quando o serviço não está instalado. |
+| Abrir G HUB Linux | Abre a GUI (igual ao clique esquerdo no ícone). |
+| Sair e parar o serviço | Encerra o daemon (ver abaixo). |
+
+Clique esquerdo no ícone abre a GUI (`ghub-gui`). Ela só existe a partir do Plano 4; até lá, uma notificação avisa que a interface gráfica ainda não está instalada. Falhas das ações do menu (DPI, perfil, autostart, parar) também viram notificação.
+
+O tooltip traz o nome do dispositivo e "`<bateria>` · `<dpi>` DPI" (ou "Inativo ou dormindo · `<bateria>`"). Nem todo host desenha tooltips: o Quickshell da verificação não desenha.
+
+O menu é reconstruído a cada evento do gerente (juntando rajadas de 150 ms) e a cada 30 s (o que também relê o estado do autostart no systemd).
+
+### Estados do ícone
+
+Pinguim desenhado em código (22, 32 e 48 px), cor `#ebdbb2`:
+
+| Estado | Quando | Aparência |
+|---|---|---|
+| Normal | Dispositivo conectado | Pinguim. |
+| Bateria baixa | Bateria ≤ 15 % e não está com carga completa | Ponto vermelho (`#fb4934`) no canto inferior direito. |
+| Carregando | Bateria carregando | Ponto verde (`#b8bb26`) no canto inferior direito. |
+| Desconectado | Nenhum dispositivo, ou o principal offline/dormindo | Pinguim esmaecido (40 % de opacidade). |
+
+## Notificações
+
+Enviadas por `org.freedesktop.Notifications.Notify` no barramento de sessão (app "G HUB Linux", 8 s). Sem servidor de notificações, vão para o stderr/journal.
+
+- **Bateria baixa**: a cada sinal `BatteryLow` — "Bateria baixa", "`<nome>`: `<n>` %", urgência crítica.
+- **Erros** das ações da bandeja: urgência normal.
+- **Teste**: `ghubd --notify-test` envia uma notificação de teste, imprime "notificação de teste enviada" e sai (não inicia o daemon). `ghubd --help` mostra o uso.
+
+## Iniciar com o sistema e ativação sob demanda
+
+- **Unit** (`packaging/systemd/ghubd.service` → `~/.config/systemd/user/ghubd.service`): `Type=dbus`, `BusName=org.ghublinux.Daemon`, `ExecStart=%h/.local/bin/ghubd`, `Restart=on-failure`, `WantedBy=default.target`.
+- **Arquivo de ativação** (`packaging/dbus/org.ghublinux.Daemon.service` → `~/.local/share/dbus-1/services/`): `Name=org.ghublinux.Daemon`, `SystemdService=ghubd.service`. Uma chamada ao nome com o serviço parado faz o systemd iniciá-lo. O arquivo não expande variáveis, então o instalador grava o caminho absoluto em `Exec=`.
+- **Primeira instalação**: o dbus-broker só enxerga um arquivo de ativação novo depois de reler a configuração (ou de um novo login); antes disso a chamada falha com "The name is not activatable". Por isso `packaging/install-user.sh [--dry-run]` roda, depois do `daemon-reload`, `busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig`; se isso falhar, só avisa e segue.
+- A primeira chamada que ativa o daemon pode receber `Failed` ("o gerente de dispositivos não respondeu a tempo") se a varredura inicial demorar mais de 5 s (visto uma vez, com o mouse meio acordado; numa segunda medição a primeira resposta veio 0,34 s após o início).
+- **"Iniciar com o sistema"** na bandeja = `systemctl --user enable ghubd.service` / `systemctl --user disable ghubd.service` (estado lido com `systemctl --user is-enabled`). Só o daemon inicia com a sessão; a GUI abre sob demanda.
+- **"Sair e parar o serviço"**: quando o daemon é o processo principal da unit (`INVOCATION_ID` definido e `SYSTEMD_EXEC_PID` igual ao próprio PID), roda `systemctl --user stop --no-block ghubd.service` e o systemd o encerra (sem reinício, pois o `Restart=on-failure` não se aplica a uma parada pedida). Iniciado à mão, só encerra o processo.
+
+## Compatibilidade com hosts de bandeja
+
+O menu é um `com.canonical.dbusmenu` e cada host o relê de um jeito. O Quickshell da verificação (`docs/hardware/tray-verification.md`) relê o menu só em momentos específicos e ignora atualizações posteriores:
+
+- ao clicar num item de submenu, ele envia `Event(clicked)`, `Event(closed)` e, 4 ms depois, `GetLayout`; uma atualização que chegue depois disso é ignorada;
+- ao clicar num item de topo, ele não relê nada, e nunca aplica `toggle-state` recebido por `ItemsPropertiesUpdated`; só aplica mudanças estruturais (`LayoutUpdated`).
+
+Por isso o menu usa três medidas, todas em `crates/ghubd/src/tray.rs`:
+
+1. **Atualização otimista**: o clique já marca a nova seleção (rádio de DPI/perfil, ✓ do autostart) antes de devolver o controle ao host.
+2. **Espera pelo resultado (`SETTLE_TIMEOUT`, 800 ms)**: o clique envia a ação e espera até 800 ms a vista reconstruída depois de executá-la, para que o `GetLayout` seguinte já veja o estado real (bateria, DPI, Hz). Sem resposta no prazo, fica o estado otimista e o refresh normal corrige depois. Durante essa espera a thread do `ksni` fica bloqueada.
+3. **Marcador de layout invisível**: um submenu oculto no fim do menu alterna entre 0 e 1 filho oculto a cada mudança visível, o que força o `ksni` a emitir `LayoutUpdated` e o host a reler o menu inteiro. Risco: um host que ignore `visible:false` mostraria uma linha vazia no fim do menu (no Quickshell do usuário não aparece).
+
 ## Verificado no hardware
 
 Com o G703 LIGHTSPEED (receptor `046d:c539`) em 2026-10-12, commit `7696a89` (detalhes em `docs/hardware/daemon-verification.md`):
@@ -184,6 +249,8 @@ Com o G703 LIGHTSPEED (receptor `046d:c539`) em 2026-10-12, commit `7696a89` (de
 - DPI fora da grade, polling não anunciado e nível ativo fora da lista são rejeitados sem mudar o mouse.
 - Mouse desligado e religado: o daemon marca offline, redescobre e reaplica o perfil (1600 DPI voltou, embora o mouse volte em 800 sozinho).
 - Mouse dormindo por inatividade aparece offline e é redetectado ao acordar; escrita num dispositivo offline falha com `o dispositivo <id> está offline`.
+
+A bandeja, as notificações, o autostart e a ativação sob demanda foram verificados no desktop (Hyprland + Quickshell) em 2026-10-12: `docs/hardware/tray-verification.md`.
 
 ## Limitações da v1
 
@@ -198,7 +265,7 @@ Com o G703 LIGHTSPEED (receptor `046d:c539`) em 2026-10-12, commit `7696a89` (de
 - **Mouse dormindo aparece offline**: só é redetectado no ciclo de 5 s; depois de acordar pode levar até um ciclo mais o tempo da varredura para voltar. Se o daemon iniciar com o mouse dormindo, ele fica com 0 dispositivos até o mouse acordar.
 - **`ProfileChanged` em criar/apagar** traz o nome do perfil ativo (que não muda); clientes devem chamar `ListProfiles` de novo ao receber o sinal.
 - **Timeout não cancela**: um comando que estoura os 5 s devolve `Failed`, mas continua na fila do gerente e ainda pode ser aplicado depois.
-- Sem bandeja, notificação visual ou GUI ainda (planos seguintes); o limite de bateria baixa é fixo na v1 (aviso em 15%, rearma em 20%).
+- Sem GUI ainda (Plano 4); o limite de bateria baixa é fixo na v1 (aviso em 15%, rearma em 20%).
 
 ## Pendências para os Planos 3 e 4
 
@@ -207,8 +274,12 @@ Com o G703 LIGHTSPEED (receptor `046d:c539`) em 2026-10-12, commit `7696a89` (de
 3. **Métodos D-Bus síncronos**: um comando lento bloqueia os outros clientes. Torná-los assíncronos; um cliente que recebe `Failed` por timeout deve considerar o estado desconhecido e reler em `DeviceChanged`/`ProfileChanged`.
 4. **Diagnóstico pelo D-Bus** (`Warnings()` + `WarningsChanged`): `profiles.toml` inválido, falta de permissão udev e falhas ao salvar.
 5. **Declarar os sinais no `#[interface]`** para que apareçam na introspecção.
-6. **Arquivo de ativação D-Bus** (`SystemdService=ghubd.service`) e "Sair e parar o serviço" usando `systemctl --user stop`.
-7. **Limite de bateria baixa configurável** (spec 5.3), ou calculado na bandeja.
-8. **Teste opcional somente leitura no hardware** (`--features hardware`, spec seção 9) ainda falta.
-9. **GUI**: validar o DPI contra `dpi_min`/`dpi_max`/`dpi_step`/`dpi_list`; tratar `dpi_current == 0` com o dispositivo conectado; esconder ou marcar fantasmas com `connected=false` (dispositivos nunca são removidos); reler a lista de perfis em `ProfileChanged` (criar/apagar trazem o nome do ativo).
-10. **Pendências menores conhecidas**: a primeira execução com 2+ dispositivos semeia só a partir do primeiro; o `.bak` é sobrescrito por uma segunda corrupção; o arquivo temporário fica para trás depois de um save que falhou e não há `fsync` do diretório; o monitor udev só termina depois do próximo evento udev; o script de instalação presume o `CARGO_TARGET_DIR` padrão; permissão negada vai para o log a cada varredura (registrar uma vez por nó e tipo de erro).
+6. **Limite de bateria baixa configurável** (spec 5.3), ou calculado na bandeja.
+7. **Teste opcional somente leitura no hardware** (`--features hardware`, spec seção 9) ainda falta.
+8. **GUI**: validar o DPI contra `dpi_min`/`dpi_max`/`dpi_step`/`dpi_list`; tratar `dpi_current == 0` com o dispositivo conectado; esconder ou marcar fantasmas com `connected=false` (dispositivos nunca são removidos); reler a lista de perfis em `ProfileChanged` (criar/apagar trazem o nome do ativo).
+9. **Abrir a GUI pela bandeja** (Plano 4): o `GuiLauncher` roda `ghub-gui` dentro do cgroup do serviço (herda o ambiente do daemon, pode faltar `WAYLAND_DISPLAY`; sair/reiniciar o daemon mata a GUI). Lançar via `systemd-run --user --scope` e reportar falhas do processo filho.
+10. **Varredura bloqueia o gerente**: a thread única fica presa durante uma varredura lenta e um comando D-Bus nesse meio-tempo pode estourar os 5 s (visto na primeira ativação sob demanda).
+11. **Tooltip**: não desenhado pelo Quickshell do usuário (limitação do host); conferir em outros hosts.
+12. **Bandeja, pendências dos reviews**: o refresher sobrevive ao fim da bandeja; `Shutdown` redundante antes do `exit(0)`; a drenagem do refresher pode atrasar sob fluxo contínuo de eventos (GUI com slider); rádios habilitados dentro de submenu desabilitado; corrida rara (≈1 % ou menos) em que o refresher aplica uma vista calculada antes da ação; pânico em `build_view`/`execute` encerra só a thread de ações; o valor de 800 ms (`SETTLE_TIMEOUT`) não tem teste de constante; o clique bloqueia toda a thread do `ksni` por até 800 ms; um comentário a ajustar.
+13. **Instalador**: o `sed` usa `|` como separador e quebra se o `HOME` contiver `|`.
+14. **Pendências menores conhecidas**: a primeira execução com 2+ dispositivos semeia só a partir do primeiro; o `.bak` é sobrescrito por uma segunda corrupção; o arquivo temporário fica para trás depois de um save que falhou e não há `fsync` do diretório; o monitor udev só termina depois do próximo evento udev; o script de instalação presume o `CARGO_TARGET_DIR` padrão; permissão negada vai para o log a cada varredura (registrar uma vez por nó e tipo de erro).

@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.ghublinux.Daemon
+Exec=@BINDIR@/ghubd
+SystemdService=ghubd.service
