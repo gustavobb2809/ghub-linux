@@ -19,11 +19,14 @@ pub struct GhubTray {
     view: TrayView,
     actions: Sender<Request>,
     settle_timeout: Duration,
+    /// Conta as mudanças publicadas da vista; a paridade decide os filhos do marcador de
+    /// layout (ver `layout_marker`).
+    epoch: u32,
 }
 
 impl GhubTray {
     pub fn new(view: TrayView, actions: Sender<Request>) -> Self {
-        GhubTray { view, actions, settle_timeout: SETTLE_TIMEOUT }
+        GhubTray { view, actions, settle_timeout: SETTLE_TIMEOUT, epoch: 0 }
     }
 
     pub fn with_settle_timeout(mut self, timeout: Duration) -> Self {
@@ -33,7 +36,18 @@ impl GhubTray {
 
     /// Substituição autoritativa: o refresh real sobrescreve qualquer estado otimista.
     pub fn set_view(&mut self, view: TrayView) {
+        if view != self.view {
+            self.epoch = self.epoch.wrapping_add(1);
+        }
         self.view = view;
+    }
+
+    /// Fecha um clique: uma única virada de época se a vista final (otimista e/ou
+    /// respondida) difere da de antes do clique.
+    fn finish_click(&mut self, before: &TrayView) {
+        if self.view != *before {
+            self.epoch = self.epoch.wrapping_add(1);
+        }
     }
 
     // Atualizações otimistas: o `ksni` regera o menu logo após rodar o closure, então o
@@ -91,6 +105,26 @@ fn settle(this: &mut GhubTray, tx: &Sender<Request>, timeout: Duration, action: 
     }
 }
 
+/// Marcador de layout: submenu oculto no fim da raiz cuja lista de filhos alterna entre
+/// vazia e um filho oculto a cada época. O `ksni` só emite `LayoutUpdated` quando a lista de
+/// filhos de algum item muda, e alguns hosts (ex.: Quickshell) ignoram `toggle-state` vindo
+/// por `ItemsPropertiesUpdated`; forçar o relayout faz o host reler o menu inteiro.
+fn layout_marker(epoch: u32) -> MenuItem<GhubTray> {
+    let submenu = if epoch % 2 == 1 {
+        vec![StandardItem {
+            label: String::new(),
+            visible: false,
+            enabled: false,
+            ..Default::default()
+        }
+        .into()]
+    } else {
+        vec![]
+    };
+    SubMenu { label: String::new(), visible: false, enabled: false, submenu, ..Default::default() }
+        .into()
+}
+
 fn radio_options(labels: &[String]) -> Vec<RadioItem> {
     labels
         .iter()
@@ -115,8 +149,10 @@ fn menu_item(entry: &Entry, actions: &Sender<Request>, timeout: Duration) -> Men
                 submenu: vec![RadioGroup {
                     selected: *selected,
                     select: Box::new(move |this: &mut GhubTray, index| {
+                        let before = this.view.clone();
                         this.select_dpi(index);
                         settle(this, &tx, timeout, Action::SetDpiLevel(index));
+                        this.finish_click(&before);
                     }),
                     options: radio_options(labels),
                     ..Default::default()
@@ -135,8 +171,10 @@ fn menu_item(entry: &Entry, actions: &Sender<Request>, timeout: Duration) -> Men
                     selected: *selected,
                     select: Box::new(move |this: &mut GhubTray, index| {
                         if let Some(name) = names.get(index) {
+                            let before = this.view.clone();
                             this.select_profile(index);
                             settle(this, &tx, timeout, Action::ActivateProfile(name.clone()));
+                            this.finish_click(&before);
                         }
                     }),
                     options: radio_options(labels),
@@ -154,8 +192,10 @@ fn menu_item(entry: &Entry, actions: &Sender<Request>, timeout: Duration) -> Men
                 enabled: *enabled,
                 checked: *checked,
                 activate: Box::new(move |this: &mut GhubTray| {
+                    let before = this.view.clone();
                     this.toggle_autostart();
                     settle(this, &tx, timeout, Action::ToggleAutostart);
+                    this.finish_click(&before);
                 }),
                 ..Default::default()
             }
@@ -225,6 +265,7 @@ impl ksni::Tray for GhubTray {
             .entries
             .iter()
             .map(|e| menu_item(e, &self.actions, self.settle_timeout))
+            .chain(std::iter::once(layout_marker(self.epoch)))
             .collect()
     }
 }
@@ -312,7 +353,9 @@ mod tests {
     fn menu_mirrors_the_view() {
         let (t, _rx) = tray(full_view());
         let menu = t.menu();
-        assert_eq!(menu.len(), 9);
+        // 9 entradas da vista + o marcador de layout oculto no fim.
+        assert_eq!(menu.len(), 9 + 1);
+        assert_eq!(marker_children(&t), 0);
         match &menu[0] {
             MenuItem::Standard(i) => {
                 assert_eq!(i.label, "G703 — 91 %");
@@ -737,5 +780,117 @@ mod tests {
             vec![(Action::OpenGui, false), (Action::Quit, false), (Action::OpenGui, false)]
         );
         assert_eq!(t.view, before);
+    }
+
+    /// Valida o marcador de layout (último item da raiz: submenu oculto, desabilitado e sem
+    /// rótulo) e devolve quantos filhos ele tem agora.
+    fn marker_children(t: &GhubTray) -> usize {
+        let menu = t.menu();
+        match menu.last() {
+            Some(MenuItem::SubMenu(s)) => {
+                assert!(!s.visible);
+                assert!(!s.enabled);
+                assert_eq!(s.label, "");
+                for child in &s.submenu {
+                    match child {
+                        MenuItem::Standard(i) => {
+                            assert!(!i.visible);
+                            assert!(!i.enabled);
+                            assert_eq!(i.label, "");
+                        }
+                        _ => panic!("esperava filho oculto simples no marcador"),
+                    }
+                }
+                s.submenu.len()
+            }
+            _ => panic!("esperava o marcador de layout no fim do menu"),
+        }
+    }
+
+    #[test]
+    fn marker_is_the_last_item_and_never_leaks_elsewhere() {
+        let (t, _rx) = tray(full_view());
+        assert_eq!(marker_children(&t), 0);
+        assert_eq!(t.menu().len(), full_view().entries.len() + 1);
+        let tip = t.tool_tip();
+        assert_eq!(tip.title, "G703");
+        assert_eq!(tip.description, "91 %");
+        assert_eq!(t.title(), "G HUB Linux");
+
+        let (t, _rx) = tray(view(vec![]));
+        assert_eq!(t.menu().len(), 1);
+        assert_eq!(marker_children(&t), 0);
+    }
+
+    #[test]
+    fn set_view_flips_the_marker_only_when_the_view_changes() {
+        let (mut t, _rx) = tray(full_view());
+        assert_eq!(marker_children(&t), 0);
+        t.set_view(settled_view());
+        assert_eq!(marker_children(&t), 1);
+        t.set_view(settled_view());
+        assert_eq!(marker_children(&t), 1);
+        t.set_view(full_view());
+        assert_eq!(marker_children(&t), 0);
+        t.set_view(full_view());
+        assert_eq!(marker_children(&t), 0);
+    }
+
+    #[test]
+    fn settled_click_flips_the_marker_exactly_once() {
+        let (mut t, actions) = answering_tray();
+        // Otimista + vista respondida mudam a vista duas vezes, mas o marcador vira uma só
+        // (duas viradas voltariam a 0 filhos).
+        activate_checkmark(&mut t, 6);
+        assert_shows_settled_view(&t);
+        assert_eq!(marker_children(&t), 1);
+        drop(t);
+        assert_eq!(actions.join().unwrap(), vec![(Action::ToggleAutostart, true)]);
+    }
+
+    #[test]
+    fn timed_out_click_with_an_optimistic_change_flips_the_marker_once() {
+        let (mut t, rx) = tray(full_view());
+        activate_checkmark(&mut t, 6);
+        assert_eq!(rx.try_recv().unwrap().action, Action::ToggleAutostart);
+        assert_eq!(marker_children(&t), 1);
+        select_radio(&mut t, 2, 0);
+        assert_eq!(rx.try_recv().unwrap().action, Action::SetDpiLevel(0));
+        assert_eq!(marker_children(&t), 0);
+    }
+
+    #[test]
+    fn click_whose_reply_restores_the_start_view_does_not_flip_the_marker() {
+        let (tx, rx) = channel();
+        let actions = answering_actions(rx, full_view());
+        let mut t = GhubTray::new(full_view(), tx);
+        activate_checkmark(&mut t, 6);
+        assert_eq!(t.view, full_view());
+        assert_eq!(marker_children(&t), 0);
+        drop(t);
+        assert_eq!(actions.join().unwrap(), vec![(Action::ToggleAutostart, true)]);
+    }
+
+    #[test]
+    fn clicks_that_leave_the_view_unchanged_do_not_flip_the_marker() {
+        let (mut t, _rx) = tray(full_view());
+        let menu = t.menu();
+        if let MenuItem::Standard(i) = &menu[7] {
+            (i.activate)(&mut t);
+        }
+        if let MenuItem::Standard(i) = &menu[8] {
+            (i.activate)(&mut t);
+        }
+        t.activate(0, 0);
+        assert_eq!(marker_children(&t), 0);
+
+        let (mut t, _rx) = tray(view(vec![Entry::Autostart { checked: true, enabled: false }]));
+        activate_checkmark(&mut t, 0);
+        assert_eq!(marker_children(&t), 0);
+
+        let (mut t, _rx) =
+            tray(view(vec![Entry::Profiles { labels: vec!["Padrão".into()], selected: 0 }]));
+        select_radio(&mut t, 0, 5);
+        assert_eq!(marker_children(&t), 0);
     }
 }
