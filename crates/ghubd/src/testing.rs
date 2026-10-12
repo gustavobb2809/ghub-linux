@@ -154,8 +154,6 @@ pub fn sample_summary(id: &str, connected: bool) -> DeviceSummary {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 pub fn sample_state(id: &str, connected: bool) -> DeviceState {
     DeviceState {
         id: id.into(),

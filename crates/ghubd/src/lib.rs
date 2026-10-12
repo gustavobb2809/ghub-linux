@@ -3,6 +3,7 @@
 pub mod actions;
 pub mod backend;
 pub mod battery_sysfs;
+pub mod hub;
 pub mod link;
 pub mod mouse;
 pub mod notify;
