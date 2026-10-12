@@ -63,10 +63,10 @@ Responsabilidade: falar HID++ com dispositivos Logitech por `hidraw`.
 - Enumeração: varre `/dev/hidraw*` / udev, filtra vendor `046d`, identifica receptor e dispositivos pareados.
 - Descoberta de features (HID++ 2.0 `IRoot`/`IFeatureSet`): mapeia ID de feature para índice no dispositivo.
 - API tipada por feature, cada uma em módulo próprio:
-  - bateria (`0x1004` ou `0x1000`, conforme o dispositivo expõe),
+  - bateria (`0x1004`, `0x1000` ou `0x1001`, conforme o dispositivo expõe; o G703 LS só expõe `0x1001` Battery Voltage) (o ID 0x1001 foi observado no hardware; o nome 'Battery Voltage' vem do conhecimento público do protocolo e é corroborado indiretamente pelo atributo `voltage_now` do driver do kernel),
   - DPI ajustável (`0x2201`),
   - taxa de report (`0x8060`),
-  - reservados para fases futuras: RGB (`0x8071`), perfis onboard (`0x8100`), remapeamento de botões (`0x1b04`).
+  - reservados para fases futuras: RGB (`0x8071`), perfis onboard (`0x8100`), remapeamento de botões (`0x1b04`; ausente no G703 LS, que precisará de outro caminho, provavelmente via perfis onboard).
 - Erros tipados (`HidppError`): dispositivo ausente, timeout, erro do protocolo (código HID++), feature não suportada.
 
 **Regra de ouro:** uma feature só é usada se o dispositivo a anunciar. A UI esconde o que o dispositivo não suporta.
@@ -143,4 +143,4 @@ Interface D-Bus no barramento de sessão, nome `org.ghublinux.Daemon1`, objeto `
 - Nome definitivo do projeto (hoje "ghub", provisório).
 - Local do repositório: assumido `~/Documentos/Projetos/ghub-linux`.
 - Licença (sugestão: GPL-3.0-or-later ou MIT; a decidir pelo usuário).
-- IDs reais das features do G703 (resolvido pelo spike do passo 1).
+- IDs reais das features do G703: resolvido, ver `docs/hardware/g703-probe.md`.

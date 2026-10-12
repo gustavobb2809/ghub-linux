@@ -1,0 +1,2 @@
+# Concede ao usuário logado acesso aos nós hidraw de dispositivos Logitech (HID++).
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="046d", TAG+="uaccess"
