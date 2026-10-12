@@ -21,8 +21,42 @@ impl GhubTray {
         GhubTray { view, actions }
     }
 
+    /// Substituição autoritativa: o refresh real sobrescreve qualquer estado otimista.
     pub fn set_view(&mut self, view: TrayView) {
         self.view = view;
+    }
+
+    // Atualizações otimistas: o `ksni` regera o menu logo após rodar o closure, então o
+    // host já recebe o novo estado na mesma ida ao D-Bus (sem esperar o refresh assíncrono).
+
+    fn select_dpi(&mut self, index: usize) {
+        if let Some(Entry::Dpi { labels, selected, .. }) =
+            self.view.entries.iter_mut().find(|e| matches!(e, Entry::Dpi { .. }))
+        {
+            if index < labels.len() {
+                *selected = index;
+            }
+        }
+    }
+
+    fn select_profile(&mut self, index: usize) {
+        if let Some(Entry::Profiles { labels, selected }) =
+            self.view.entries.iter_mut().find(|e| matches!(e, Entry::Profiles { .. }))
+        {
+            if index < labels.len() {
+                *selected = index;
+            }
+        }
+    }
+
+    fn toggle_autostart(&mut self) {
+        if let Some(Entry::Autostart { checked, enabled }) =
+            self.view.entries.iter_mut().find(|e| matches!(e, Entry::Autostart { .. }))
+        {
+            if *enabled {
+                *checked = !*checked;
+            }
+        }
     }
 }
 
@@ -55,7 +89,8 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
                 enabled: *enabled,
                 submenu: vec![RadioGroup {
                     selected: *selected,
-                    select: Box::new(move |_: &mut GhubTray, index| {
+                    select: Box::new(move |this: &mut GhubTray, index| {
+                        this.select_dpi(index);
                         let _ = tx.send(Action::SetDpiLevel(index));
                     }),
                     options: radio_options(labels),
@@ -73,8 +108,9 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
                 label: format!("Perfil: {}", escape(labels.get(*selected).map_or("", String::as_str))),
                 submenu: vec![RadioGroup {
                     selected: *selected,
-                    select: Box::new(move |_: &mut GhubTray, index| {
+                    select: Box::new(move |this: &mut GhubTray, index| {
                         if let Some(name) = names.get(index) {
+                            this.select_profile(index);
                             let _ = tx.send(Action::ActivateProfile(name.clone()));
                         }
                     }),
@@ -92,7 +128,8 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
                 label: "Iniciar com o sistema".into(),
                 enabled: *enabled,
                 checked: *checked,
-                activate: Box::new(move |_: &mut GhubTray| {
+                activate: Box::new(move |this: &mut GhubTray| {
+                    this.toggle_autostart();
                     let _ = tx.send(Action::ToggleAutostart);
                 }),
                 ..Default::default()
@@ -409,5 +446,107 @@ mod tests {
         v.tooltip_text = "outro".into();
         t.set_view(v);
         assert_eq!(t.tool_tip().description, "outro");
+    }
+
+    fn radio_selected(item: &MenuItem<GhubTray>) -> usize {
+        match item {
+            MenuItem::SubMenu(s) => match &s.submenu[0] {
+                MenuItem::RadioGroup(g) => g.selected,
+                _ => panic!("esperava grupo de rádio"),
+            },
+            _ => panic!("esperava submenu"),
+        }
+    }
+
+    fn select_radio(t: &mut GhubTray, pos: usize, index: usize) {
+        let menu = t.menu();
+        match &menu[pos] {
+            MenuItem::SubMenu(s) => match &s.submenu[0] {
+                MenuItem::RadioGroup(g) => (g.select)(t, index),
+                _ => panic!("esperava grupo de rádio"),
+            },
+            _ => panic!("esperava submenu"),
+        }
+    }
+
+    fn activate_checkmark(t: &mut GhubTray, pos: usize) {
+        let menu = t.menu();
+        match &menu[pos] {
+            MenuItem::Checkmark(c) => (c.activate)(t),
+            _ => panic!("esperava item marcável"),
+        }
+    }
+
+    #[test]
+    fn dpi_click_updates_the_menu_optimistically() {
+        let (mut t, rx) = tray(view(vec![Entry::Dpi {
+            labels: vec!["400 DPI".into(), "800 DPI".into(), "1600 DPI".into()],
+            selected: 0,
+            enabled: true,
+        }]));
+        select_radio(&mut t, 0, 2);
+        assert_eq!(radio_selected(&t.menu()[0]), 2);
+        assert_eq!(rx.try_recv().unwrap(), Action::SetDpiLevel(2));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn profile_click_updates_the_menu_optimistically() {
+        let (mut t, rx) = tray(view(vec![Entry::Profiles {
+            labels: vec!["Padrão".into(), "a_b".into()],
+            selected: 0,
+        }]));
+        select_radio(&mut t, 0, 1);
+        let menu = t.menu();
+        match &menu[0] {
+            MenuItem::SubMenu(s) => assert_eq!(s.label, "Perfil: a__b"),
+            _ => panic!("esperava submenu de perfil"),
+        }
+        assert_eq!(radio_selected(&menu[0]), 1);
+        assert_eq!(rx.try_recv().unwrap(), Action::ActivateProfile("a_b".into()));
+        assert!(rx.try_recv().is_err());
+
+        let before = t.view.clone();
+        select_radio(&mut t, 0, 5);
+        assert_eq!(t.view, before);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn autostart_click_flips_the_checkmark_optimistically() {
+        let (mut t, rx) = tray(full_view());
+        activate_checkmark(&mut t, 6);
+        match &t.menu()[6] {
+            MenuItem::Checkmark(c) => assert!(!c.checked),
+            _ => panic!("esperava item marcável"),
+        }
+        assert_eq!(rx.try_recv().unwrap(), Action::ToggleAutostart);
+
+        let (mut t, _rx) = tray(view(vec![Entry::Autostart { checked: true, enabled: false }]));
+        let before = t.view.clone();
+        activate_checkmark(&mut t, 0);
+        assert_eq!(t.view, before);
+        match &t.menu()[0] {
+            MenuItem::Checkmark(c) => assert!(c.checked),
+            _ => panic!("esperava item marcável"),
+        }
+    }
+
+    #[test]
+    fn real_refresh_overrides_the_optimistic_state() {
+        let original = full_view();
+        let (mut t, _rx) = tray(original.clone());
+        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 4, 1);
+        activate_checkmark(&mut t, 6);
+        assert_ne!(t.view, original);
+        t.set_view(original.clone());
+        let menu = t.menu();
+        assert_eq!(radio_selected(&menu[2]), 1);
+        assert_eq!(radio_selected(&menu[4]), 0);
+        match &menu[6] {
+            MenuItem::Checkmark(c) => assert!(c.checked),
+            _ => panic!("esperava item marcável"),
+        }
     }
 }
