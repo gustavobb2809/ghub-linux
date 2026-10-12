@@ -117,3 +117,16 @@ Quando o mouse dormiu por inatividade, o daemon o marcou offline (`connected=fal
 3. **Bateria ao ficar offline:** a associação com o sysfs é perdida até a próxima varredura bem-sucedida (pendência menor já registrada).
 4. **Nome do erro D-Bus** da rejeição de 125 DPI não foi registrado (só a mensagem).
 5. **Reconexão:** precisou do mouse desligado ≥ 15 s e de uma segunda rodada com DPI diferente do padrão de fábrica para ser conclusiva.
+
+## Revalidação após as correções finais (commit 676659f)
+
+Executada no G703 real em 2026-10-12, build debug do commit 676659f. Somente leitura, exceto pelo usuário desligar o mouse; nenhum perfil nem DPI foi gravado (DPI continuou 1200 e `profiles.toml` manteve `dpi_levels = [1200]`).
+
+1. O daemon subiu com o mouse dormindo: `Devices` devolveu 0 dispositivos. Seis chamadas seguidas a `Rescan` (mouse acordando) fizeram o dispositivo aparecer em `Devices` (nome "G703 LIGHTSPEED Wireless Gaming Mouse w/ HERO"); a leitura de bateria só aparece no ciclo seguinte de 5 s (a bateria vinha como -1 até o primeiro ciclo).
+2. Quando o mouse voltou a dormir, o dispositivo ficou `connected = false` mas manteve a bateria (88 %, "discharging"): o mapeamento de bateria agora é preservado entre varreduras (antes virava -1/"unknown").
+3. Com o mouse online, 8 chamadas seguidas a `Rescan` não alteraram o estado (conectado, 1200 DPI, 89 %). Era o cenário que acumulava respostas HID++ antigas na fila de um descritor aberto antes das correções.
+4. O usuário desligou o mouse pela chave: na primeira consulta depois do desligamento (menos de ~13 s, ciclo de 5 s) `Devices` já mostrava `connected = false`, bateria 89 % e estado "unknown" (o kernel reporta o status como desconhecido com o mouse desligado).
+
+**Limite:** é uma verificação manual curta e não prova a ausência de respostas antigas em outros cenários; a ausência de acúmulo é sustentada pelos testes automatizados com socketpair e pelo comportamento observado (desligamento detectado no primeiro ciclo).
+
+Daemon encerrado ao final; nenhum nome `org.ghublinux` restou no barramento.
