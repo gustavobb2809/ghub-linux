@@ -1,9 +1,10 @@
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
+use std::time::Duration;
 
 use ksni::menu::{CheckmarkItem, RadioGroup, RadioItem, StandardItem, SubMenu};
 use ksni::{Category, Icon, MenuItem, Status, ToolTip};
 
-use crate::actions::Action;
+use crate::actions::{Action, Request};
 use crate::tray_icon::{render, Pixmap, SIZES};
 use crate::tray_model::{Entry, TrayView};
 
@@ -11,14 +12,23 @@ fn to_icon(p: Pixmap) -> Icon {
     Icon { width: p.size as i32, height: p.size as i32, data: p.argb }
 }
 
+/// Quanto um clique que muda o estado espera pela vista real antes de devolver o menu.
+pub const SETTLE_TIMEOUT: Duration = Duration::from_millis(800);
+
 pub struct GhubTray {
     view: TrayView,
-    actions: Sender<Action>,
+    actions: Sender<Request>,
+    settle_timeout: Duration,
 }
 
 impl GhubTray {
-    pub fn new(view: TrayView, actions: Sender<Action>) -> Self {
-        GhubTray { view, actions }
+    pub fn new(view: TrayView, actions: Sender<Request>) -> Self {
+        GhubTray { view, actions, settle_timeout: SETTLE_TIMEOUT }
+    }
+
+    pub fn with_settle_timeout(mut self, timeout: Duration) -> Self {
+        self.settle_timeout = timeout;
+        self
     }
 
     /// Substituição autoritativa: o refresh real sobrescreve qualquer estado otimista.
@@ -66,6 +76,21 @@ fn escape(text: &str) -> String {
     text.replace('_', "__")
 }
 
+/// Envia uma ação que muda o estado (o estado otimista já foi aplicado) e espera, até
+/// `timeout`, a vista reconstruída depois de executá-la. O host (ex.: Quickshell) relê o
+/// menu com `GetLayout` poucos ms após o clique e ignora o `ItemsPropertiesUpdated` posterior,
+/// então a resposta tem de sair já com o estado real (bateria, DPI, Hz…). Sem resposta, fica
+/// o estado otimista. Roda com a trava do `ksni` tomada: não usar `handle.update` aqui.
+fn settle(this: &mut GhubTray, tx: &Sender<Request>, timeout: Duration, action: Action) {
+    let (reply, view) = mpsc::channel::<TrayView>();
+    if tx.send(Request { action, reply: Some(reply) }).is_err() {
+        return;
+    }
+    if let Ok(v) = view.recv_timeout(timeout) {
+        this.view = v;
+    }
+}
+
 fn radio_options(labels: &[String]) -> Vec<RadioItem> {
     labels
         .iter()
@@ -73,7 +98,7 @@ fn radio_options(labels: &[String]) -> Vec<RadioItem> {
         .collect()
 }
 
-fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
+fn menu_item(entry: &Entry, actions: &Sender<Request>, timeout: Duration) -> MenuItem<GhubTray> {
     match entry {
         Entry::Info(text) => StandardItem {
             label: escape(text),
@@ -91,7 +116,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
                     selected: *selected,
                     select: Box::new(move |this: &mut GhubTray, index| {
                         this.select_dpi(index);
-                        let _ = tx.send(Action::SetDpiLevel(index));
+                        settle(this, &tx, timeout, Action::SetDpiLevel(index));
                     }),
                     options: radio_options(labels),
                     ..Default::default()
@@ -111,7 +136,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
                     select: Box::new(move |this: &mut GhubTray, index| {
                         if let Some(name) = names.get(index) {
                             this.select_profile(index);
-                            let _ = tx.send(Action::ActivateProfile(name.clone()));
+                            settle(this, &tx, timeout, Action::ActivateProfile(name.clone()));
                         }
                     }),
                     options: radio_options(labels),
@@ -130,7 +155,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
                 checked: *checked,
                 activate: Box::new(move |this: &mut GhubTray| {
                     this.toggle_autostart();
-                    let _ = tx.send(Action::ToggleAutostart);
+                    settle(this, &tx, timeout, Action::ToggleAutostart);
                 }),
                 ..Default::default()
             }
@@ -141,7 +166,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
             StandardItem {
                 label: "Abrir G HUB Linux".into(),
                 activate: Box::new(move |_: &mut GhubTray| {
-                    let _ = tx.send(Action::OpenGui);
+                    let _ = tx.send(Request { action: Action::OpenGui, reply: None });
                 }),
                 ..Default::default()
             }
@@ -152,7 +177,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Action>) -> MenuItem<GhubTray> {
             StandardItem {
                 label: "Sair e parar o serviço".into(),
                 activate: Box::new(move |_: &mut GhubTray| {
-                    let _ = tx.send(Action::Quit);
+                    let _ = tx.send(Request { action: Action::Quit, reply: None });
                 }),
                 ..Default::default()
             }
@@ -192,14 +217,14 @@ impl ksni::Tray for GhubTray {
 
     /// Clique esquerdo: abre a interface gráfica.
     fn activate(&mut self, _x: i32, _y: i32) {
-        let _ = self.actions.send(Action::OpenGui);
+        let _ = self.actions.send(Request { action: Action::OpenGui, reply: None });
     }
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         self.view
             .entries
             .iter()
-            .map(|e| menu_item(e, &self.actions))
+            .map(|e| menu_item(e, &self.actions, self.settle_timeout))
             .collect()
     }
 }
@@ -208,7 +233,7 @@ pub type TrayHandle = ksni::blocking::Handle<GhubTray>;
 
 /// Registra a bandeja. Com `assume_sni_available(true)` o `ksni` espera o
 /// `StatusNotifierWatcher` aparecer (login antes do shell) em vez de falhar.
-pub fn spawn(view: TrayView, actions: Sender<Action>) -> Result<TrayHandle, ksni::Error> {
+pub fn spawn(view: TrayView, actions: Sender<Request>) -> Result<TrayHandle, ksni::Error> {
     use ksni::blocking::TrayMethods;
     GhubTray::new(view, actions).assume_sni_available(true).spawn()
 }
@@ -219,6 +244,8 @@ mod tests {
     use crate::tray_icon::IconState;
     use ksni::Tray;
     use std::sync::mpsc::{channel, Receiver};
+    use std::thread;
+    use std::time::Instant;
 
     fn view(entries: Vec<Entry>) -> TrayView {
         TrayView {
@@ -251,9 +278,11 @@ mod tests {
         ])
     }
 
-    fn tray(v: TrayView) -> (GhubTray, Receiver<Action>) {
+    /// Bandeja de teste: ninguém responde aos pedidos (o receptor fica vivo e calado), então o
+    /// prazo de espera é curto para os testes não demorarem.
+    fn tray(v: TrayView) -> (GhubTray, Receiver<Request>) {
         let (tx, rx) = channel();
-        (GhubTray::new(v, tx), rx)
+        (GhubTray::new(v, tx).with_settle_timeout(Duration::from_millis(30)), rx)
     }
 
     #[test]
@@ -359,32 +388,32 @@ mod tests {
                 (g.select)(&mut t, 0);
             }
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::SetDpiLevel(0));
+        assert_eq!(rx.try_recv().unwrap().action, Action::SetDpiLevel(0));
 
         if let MenuItem::SubMenu(s) = &menu[4] {
             if let MenuItem::RadioGroup(g) = &s.submenu[0] {
                 (g.select)(&mut t, 1);
             }
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::ActivateProfile("Trabalho".into()));
+        assert_eq!(rx.try_recv().unwrap().action, Action::ActivateProfile("Trabalho".into()));
 
         if let MenuItem::Checkmark(c) = &menu[6] {
             (c.activate)(&mut t);
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::ToggleAutostart);
+        assert_eq!(rx.try_recv().unwrap().action, Action::ToggleAutostart);
 
         if let MenuItem::Standard(i) = &menu[7] {
             (i.activate)(&mut t);
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::OpenGui);
+        assert_eq!(rx.try_recv().unwrap().action, Action::OpenGui);
 
         if let MenuItem::Standard(i) = &menu[8] {
             (i.activate)(&mut t);
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::Quit);
+        assert_eq!(rx.try_recv().unwrap().action, Action::Quit);
 
         t.activate(0, 0);
-        assert_eq!(rx.try_recv().unwrap(), Action::OpenGui);
+        assert_eq!(rx.try_recv().unwrap().action, Action::OpenGui);
         assert!(rx.try_recv().is_err());
     }
 
@@ -425,7 +454,7 @@ mod tests {
             }
             _ => panic!("esperava submenu de perfil"),
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::ActivateProfile("a_b".into()));
+        assert_eq!(rx.try_recv().unwrap().action, Action::ActivateProfile("a_b".into()));
         match &menu[3] {
             MenuItem::Standard(i) => assert_eq!(i.label, "Abrir G HUB Linux"),
             _ => panic!(),
@@ -486,7 +515,7 @@ mod tests {
         }]));
         select_radio(&mut t, 0, 2);
         assert_eq!(radio_selected(&t.menu()[0]), 2);
-        assert_eq!(rx.try_recv().unwrap(), Action::SetDpiLevel(2));
+        assert_eq!(rx.try_recv().unwrap().action, Action::SetDpiLevel(2));
         assert!(rx.try_recv().is_err());
     }
 
@@ -503,7 +532,7 @@ mod tests {
             _ => panic!("esperava submenu de perfil"),
         }
         assert_eq!(radio_selected(&menu[0]), 1);
-        assert_eq!(rx.try_recv().unwrap(), Action::ActivateProfile("a_b".into()));
+        assert_eq!(rx.try_recv().unwrap().action, Action::ActivateProfile("a_b".into()));
         assert!(rx.try_recv().is_err());
 
         let before = t.view.clone();
@@ -520,7 +549,7 @@ mod tests {
             MenuItem::Checkmark(c) => assert!(!c.checked),
             _ => panic!("esperava item marcável"),
         }
-        assert_eq!(rx.try_recv().unwrap(), Action::ToggleAutostart);
+        assert_eq!(rx.try_recv().unwrap().action, Action::ToggleAutostart);
 
         let (mut t, _rx) = tray(view(vec![Entry::Autostart { checked: true, enabled: false }]));
         let before = t.view.clone();
@@ -548,5 +577,165 @@ mod tests {
             MenuItem::Checkmark(c) => assert!(c.checked),
             _ => panic!("esperava item marcável"),
         }
+    }
+
+    /// Faz o papel do laço de ações: para cada pedido com resposta, devolve `reply_view`
+    /// (uma vista reconhecível, diferente da otimista). Devolve os pedidos recebidos.
+    fn answering_actions(
+        rx: Receiver<Request>,
+        reply_view: TrayView,
+    ) -> thread::JoinHandle<Vec<(Action, bool)>> {
+        thread::spawn(move || {
+            let mut seen = Vec::new();
+            for req in rx {
+                let has_reply = req.reply.is_some();
+                if let Some(reply) = req.reply {
+                    let _ = reply.send(reply_view.clone());
+                }
+                seen.push((req.action, has_reply));
+            }
+            seen
+        })
+    }
+
+    fn settled_view() -> TrayView {
+        let mut v = view(vec![
+            Entry::Info("G703 — 42 %".into()),
+            Entry::Info("1600 DPI · 1000 Hz".into()),
+            Entry::Separator,
+            Entry::Dpi {
+                labels: vec!["800 DPI".into(), "1200 DPI".into()],
+                selected: 0,
+                enabled: true,
+            },
+            Entry::Separator,
+            Entry::Profiles {
+                labels: vec!["Padrão".into(), "Trabalho".into()],
+                selected: 1,
+            },
+            Entry::Separator,
+            Entry::Autostart { checked: false, enabled: true },
+            Entry::OpenGui,
+            Entry::Quit,
+        ]);
+        v.tooltip_text = "vista real".into();
+        v
+    }
+
+    fn info_label(item: &MenuItem<GhubTray>) -> String {
+        match item {
+            MenuItem::Standard(i) => i.label.clone(),
+            _ => panic!("esperava item informativo"),
+        }
+    }
+
+    fn assert_shows_settled_view(t: &GhubTray) {
+        assert_eq!(t.tool_tip().description, "vista real");
+        let menu = t.menu();
+        assert_eq!(info_label(&menu[0]), "G703 — 42 %");
+        assert_eq!(info_label(&menu[1]), "1600 DPI · 1000 Hz");
+        assert_eq!(radio_selected(&menu[3]), 0);
+        assert_eq!(radio_selected(&menu[5]), 1);
+    }
+
+    fn answering_tray() -> (GhubTray, thread::JoinHandle<Vec<(Action, bool)>>) {
+        let (tx, rx) = channel();
+        let handle = answering_actions(rx, settled_view());
+        (GhubTray::new(full_view(), tx), handle)
+    }
+
+    #[test]
+    fn dpi_click_shows_the_replied_view() {
+        let (mut t, actions) = answering_tray();
+        select_radio(&mut t, 2, 0);
+        assert_shows_settled_view(&t);
+        drop(t);
+        assert_eq!(actions.join().unwrap(), vec![(Action::SetDpiLevel(0), true)]);
+    }
+
+    #[test]
+    fn profile_click_shows_the_replied_view() {
+        let (mut t, actions) = answering_tray();
+        select_radio(&mut t, 4, 1);
+        assert_shows_settled_view(&t);
+        drop(t);
+        assert_eq!(
+            actions.join().unwrap(),
+            vec![(Action::ActivateProfile("Trabalho".into()), true)]
+        );
+    }
+
+    #[test]
+    fn autostart_click_shows_the_replied_view() {
+        let (mut t, actions) = answering_tray();
+        activate_checkmark(&mut t, 6);
+        assert_shows_settled_view(&t);
+        match &t.menu()[7] {
+            MenuItem::Checkmark(c) => assert!(!c.checked),
+            _ => panic!("esperava item marcável"),
+        }
+        drop(t);
+        assert_eq!(actions.join().unwrap(), vec![(Action::ToggleAutostart, true)]);
+    }
+
+    #[test]
+    fn silent_actions_side_keeps_the_optimistic_state_after_the_timeout() {
+        let (tx, rx) = channel();
+        let mut t = GhubTray::new(full_view(), tx).with_settle_timeout(Duration::from_millis(30));
+        let start = Instant::now();
+        select_radio(&mut t, 2, 0);
+        assert!(start.elapsed() < Duration::from_millis(500));
+        let req = rx.try_recv().unwrap();
+        assert_eq!(req.action, Action::SetDpiLevel(0));
+        assert!(req.reply.is_some());
+        let menu = t.menu();
+        assert_eq!(radio_selected(&menu[2]), 0);
+        assert_eq!(info_label(&menu[0]), "G703 — 91 %");
+        assert_eq!(t.tool_tip().description, "91 %");
+    }
+
+    #[test]
+    fn gone_actions_side_returns_at_once_keeping_the_optimistic_state() {
+        let (tx, rx) = channel();
+        drop(rx);
+        // Prazo longo: se esperasse por ele, o teste demoraria 10 s.
+        let mut t = GhubTray::new(full_view(), tx).with_settle_timeout(Duration::from_secs(10));
+        let start = Instant::now();
+        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 4, 1);
+        activate_checkmark(&mut t, 6);
+        assert!(start.elapsed() < Duration::from_millis(500));
+        let menu = t.menu();
+        assert_eq!(radio_selected(&menu[2]), 0);
+        assert_eq!(radio_selected(&menu[4]), 1);
+        match &menu[6] {
+            MenuItem::Checkmark(c) => assert!(!c.checked),
+            _ => panic!("esperava item marcável"),
+        }
+    }
+
+    #[test]
+    fn open_gui_quit_and_left_click_do_not_wait_for_a_view() {
+        let (tx, rx) = channel();
+        // Ninguém responde e o prazo é longo: esses itens não podem esperar.
+        let mut t = GhubTray::new(full_view(), tx).with_settle_timeout(Duration::from_secs(10));
+        let before = t.view.clone();
+        let start = Instant::now();
+        let menu = t.menu();
+        if let MenuItem::Standard(i) = &menu[7] {
+            (i.activate)(&mut t);
+        }
+        if let MenuItem::Standard(i) = &menu[8] {
+            (i.activate)(&mut t);
+        }
+        t.activate(0, 0);
+        assert!(start.elapsed() < Duration::from_millis(500));
+        let got: Vec<(Action, bool)> =
+            rx.try_iter().map(|r| (r.action, r.reply.is_some())).collect();
+        assert_eq!(
+            got,
+            vec![(Action::OpenGui, false), (Action::Quit, false), (Action::OpenGui, false)]
+        );
+        assert_eq!(t.view, before);
     }
 }

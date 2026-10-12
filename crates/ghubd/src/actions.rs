@@ -14,6 +14,14 @@ pub enum Action {
     Quit,
 }
 
+/// Uma ação vinda da bandeja. Com `reply`, quem clicou espera a vista recém-reconstruída
+/// (depois de a ação ser executada) para já responder ao host com o menu atualizado.
+#[derive(Debug, Clone)]
+pub struct Request {
+    pub action: Action,
+    pub reply: Option<std::sync::mpsc::Sender<crate::tray_model::TrayView>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
     /// Reconstruir o menu a partir do estado atual.

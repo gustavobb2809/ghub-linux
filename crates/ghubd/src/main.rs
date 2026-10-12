@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use ghub_ipc::{BUS_NAME, INTERFACE, OBJECT_PATH};
-use ghubd::actions::{Action, Executor};
+use ghubd::actions::{Executor, Request};
 use ghubd::backend::SysBackend;
 use ghubd::hub::{self, Stop, Wake};
 use ghubd::link::{ChannelLink, GuiLauncher, ManagerLink, SystemctlControl};
@@ -70,7 +70,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, event_rx) = channel::<Event>();
     let (dbus_tx, dbus_rx) = channel::<Event>();
     let (wake_tx, wake_rx) = channel::<Wake>();
-    let (action_tx, action_rx) = channel::<Action>();
+    let (action_tx, action_rx) = channel::<Request>();
 
     let conn = Builder::session()?
         .name(BUS_NAME)?
@@ -122,8 +122,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 notifier.clone(),
             );
             let wake_tx = wake_tx.clone();
+            let (link, service) = (link.clone(), service.clone());
             thread::spawn(move || {
-                match hub::run_actions(action_rx, &exec, wake_tx) {
+                // A vista recém-construída responde ao clique antes de o host reler o menu.
+                let fresh = || build_view(&hub::collect_input(&*link, &*service));
+                match hub::run_actions(action_rx, &exec, wake_tx, &fresh) {
                     // "Sair": o gerente já foi avisado (ou o systemd vai parar o serviço).
                     Stop::Quit => std::process::exit(0),
                     Stop::TrayGone => eprintln!("ghubd: bandeja encerrada; o daemon continua"),

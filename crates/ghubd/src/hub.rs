@@ -1,7 +1,7 @@
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::Duration;
 
-use crate::actions::{Action, Executor, Outcome};
+use crate::actions::{Executor, Outcome, Request};
 use crate::link::{ManagerLink, ServiceControl};
 use crate::manager::Event;
 use crate::notify::{Notification, Notifier};
@@ -90,11 +90,22 @@ pub enum Stop {
 }
 
 /// Executa as ações da bandeja. Retorna `Stop::Quit` quando uma ação pede para encerrar e
-/// `Stop::TrayGone` quando todos os remetentes (a bandeja) foram descartados.
-pub fn run_actions(actions: Receiver<Action>, exec: &Executor, wake: Sender<Wake>) -> Stop {
-    for action in actions {
-        match exec.execute(action) {
+/// `Stop::TrayGone` quando todos os remetentes (a bandeja) foram descartados. Num pedido com
+/// `reply`, a vista recém-construída (`build_view`) é enviada antes de acordar o refresher.
+pub fn run_actions(
+    requests: Receiver<Request>,
+    exec: &Executor,
+    wake: Sender<Wake>,
+    build_view: &dyn Fn() -> TrayView,
+) -> Stop {
+    for req in requests {
+        match exec.execute(req.action) {
             Outcome::Refresh => {
+                // Primeiro a resposta ao clique (o host relê o menu logo em seguida), depois o
+                // refresh assíncrono de sempre (idempotente).
+                if let Some(reply) = req.reply {
+                    let _ = reply.send(build_view());
+                }
                 let _ = wake.send(Wake);
             }
             Outcome::Exit => return Stop::Quit,
@@ -114,6 +125,111 @@ mod tests {
     use std::sync::mpsc::channel;
     use std::sync::{Arc, Mutex};
     use std::thread;
+
+    use crate::actions::Action;
+
+    fn req(action: Action) -> Request {
+        Request { action, reply: None }
+    }
+
+    fn empty_view() -> TrayView {
+        build_view(&TrayInput::empty())
+    }
+
+    fn exec_with_device() -> (Arc<FakeLink>, Executor) {
+        let link = Arc::new(FakeLink::default());
+        *link.devices.lock().unwrap() = vec![sample_summary("on", true)];
+        let service = Arc::new(FakeService::default());
+        *service.stop_result.lock().unwrap() = Ok(false);
+        let launcher = Arc::new(FakeLauncher::default());
+        let notifier = Arc::new(FakeNotifier::default());
+        let exec = Executor::new(link.clone(), service, launcher, notifier);
+        (link, exec)
+    }
+
+    #[test]
+    fn actions_loop_replies_with_the_fresh_view_before_waking_the_refresher() {
+        let (link, exec) = exec_with_device();
+        let (act_tx, act_rx) = channel();
+        let (wake_tx, wake_rx) = channel();
+        let (reply_tx, reply_rx) = channel::<TrayView>();
+        // Registra a ordem: a vista é construída (e enviada) antes do Wake.
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
+        let builds = log.clone();
+        let wakes = Mutex::new(wake_rx);
+        let seen = link.clone();
+        let build = move || {
+            // Ao construir a vista, nenhum Wake deste pedido pode ter saído ainda, e a ação
+            // já deve ter sido executada.
+            let woken = wakes.lock().unwrap().try_recv().is_ok();
+            let executed = !seen.calls().is_empty();
+            builds.lock().unwrap().push(format!("build(woken={woken},executed={executed})"));
+            let mut v = build_view(&TrayInput::empty());
+            v.tooltip_text = "fresca".into();
+            v
+        };
+        act_tx
+            .send(Request { action: Action::SetDpiLevel(0), reply: Some(reply_tx) })
+            .unwrap();
+        drop(act_tx);
+        assert_eq!(run_actions(act_rx, &exec, wake_tx, &build), Stop::TrayGone);
+        assert_eq!(*log.lock().unwrap(), vec!["build(woken=false,executed=true)".to_string()]);
+        let view = reply_rx.try_recv().expect("vista enviada na resposta");
+        assert_eq!(view.tooltip_text, "fresca");
+        assert_eq!(link.calls(), vec!["set_active_level:on:0".to_string()]);
+    }
+
+    #[test]
+    fn actions_loop_wakes_after_replying() {
+        let (_link, exec) = exec_with_device();
+        let (act_tx, act_rx) = channel();
+        let (wake_tx, wake_rx) = channel();
+        let (reply_tx, reply_rx) = channel::<TrayView>();
+        act_tx
+            .send(Request { action: Action::ToggleAutostart, reply: Some(reply_tx) })
+            .unwrap();
+        drop(act_tx);
+        assert_eq!(run_actions(act_rx, &exec, wake_tx, &empty_view), Stop::TrayGone);
+        assert!(reply_rx.try_recv().is_ok());
+        assert_eq!(wake_rx.try_iter().count(), 1);
+    }
+
+    #[test]
+    fn actions_loop_ignores_a_reply_channel_nobody_listens_to() {
+        let (link, exec) = exec_with_device();
+        let (act_tx, act_rx) = channel();
+        let (wake_tx, wake_rx) = channel();
+        let (reply_tx, reply_rx) = channel::<TrayView>();
+        drop(reply_rx); // quem clicou desistiu (tempo esgotado)
+        act_tx
+            .send(Request { action: Action::SetDpiLevel(0), reply: Some(reply_tx) })
+            .unwrap();
+        act_tx.send(req(Action::SetDpiLevel(0))).unwrap();
+        drop(act_tx);
+        assert_eq!(run_actions(act_rx, &exec, wake_tx, &empty_view), Stop::TrayGone);
+        assert_eq!(link.calls().len(), 2);
+        assert_eq!(wake_rx.try_iter().count(), 2);
+    }
+
+    #[test]
+    fn actions_loop_does_not_build_a_view_on_quit() {
+        let (link, exec) = exec_with_device();
+        let (act_tx, act_rx) = channel();
+        let (wake_tx, wake_rx) = channel();
+        let (reply_tx, reply_rx) = channel::<TrayView>();
+        act_tx.send(Request { action: Action::Quit, reply: Some(reply_tx) }).unwrap();
+        act_tx.send(req(Action::SetDpiLevel(0))).unwrap();
+        let built = Mutex::new(0);
+        let build = || {
+            *built.lock().unwrap() += 1;
+            empty_view()
+        };
+        assert_eq!(run_actions(act_rx, &exec, wake_tx, &build), Stop::Quit);
+        assert_eq!(*built.lock().unwrap(), 0);
+        assert!(reply_rx.try_recv().is_err());
+        assert_eq!(wake_rx.try_iter().count(), 0);
+        assert_eq!(link.calls(), vec!["shutdown".to_string()]);
+    }
 
     #[test]
     fn collect_input_gathers_everything_for_the_primary_device() {
@@ -285,11 +401,11 @@ mod tests {
         let exec = Executor::new(link.clone(), service, launcher, notifier);
         let (act_tx, act_rx) = channel();
         let (wake_tx, wake_rx) = channel();
-        act_tx.send(Action::SetDpiLevel(0)).unwrap();
-        act_tx.send(Action::OpenGui).unwrap();
-        act_tx.send(Action::Quit).unwrap();
-        act_tx.send(Action::OpenGui).unwrap(); // depois do Quit: não deve ser executado
-        assert_eq!(run_actions(act_rx, &exec, wake_tx), Stop::Quit);
+        act_tx.send(req(Action::SetDpiLevel(0))).unwrap();
+        act_tx.send(req(Action::OpenGui)).unwrap();
+        act_tx.send(req(Action::Quit)).unwrap();
+        act_tx.send(req(Action::OpenGui)).unwrap(); // depois do Quit: não deve ser executado
+        assert_eq!(run_actions(act_rx, &exec, wake_tx, &empty_view), Stop::Quit);
         assert_eq!(wake_rx.try_iter().count(), 2);
         assert_eq!(link.calls(), vec!["set_active_level:on:0".to_string(), "shutdown".to_string()]);
     }
@@ -305,9 +421,9 @@ mod tests {
         let exec = Executor::new(link.clone(), service, launcher, notifier);
         let (act_tx, act_rx) = channel();
         let (wake_tx, wake_rx) = channel();
-        act_tx.send(Action::SetDpiLevel(0)).unwrap();
+        act_tx.send(req(Action::SetDpiLevel(0))).unwrap();
         drop(act_tx);
-        assert_eq!(run_actions(act_rx, &exec, wake_tx), Stop::TrayGone);
+        assert_eq!(run_actions(act_rx, &exec, wake_tx, &empty_view), Stop::TrayGone);
         assert!(!link.calls().contains(&"shutdown".to_string()));
         assert_eq!(wake_rx.try_iter().count(), 1);
     }
