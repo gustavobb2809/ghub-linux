@@ -1,5 +1,6 @@
 //! Lógica do daemon `ghubd`.
 
+pub mod actions;
 pub mod backend;
 pub mod battery_sysfs;
 pub mod link;

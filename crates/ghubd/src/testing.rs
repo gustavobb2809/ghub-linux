@@ -144,8 +144,6 @@ impl Backend for FakeBackend {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 pub fn sample_summary(id: &str, connected: bool) -> DeviceSummary {
     DeviceSummary {
         id: id.into(),
@@ -178,8 +176,6 @@ pub fn sample_state(id: &str, connected: bool) -> DeviceState {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 pub struct FakeLink {
     pub devices: Mutex<Vec<DeviceSummary>>,
     pub state: Mutex<Option<DeviceState>>,
@@ -204,8 +200,6 @@ impl Default for FakeLink {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 impl FakeLink {
     pub fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
@@ -238,8 +232,6 @@ impl ManagerLink for FakeLink {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 pub struct FakeService {
     pub autostart: Mutex<Autostart>,
     pub set_result: Mutex<Result<(), String>>,
@@ -258,8 +250,6 @@ impl Default for FakeService {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 impl FakeService {
     pub fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
@@ -280,8 +270,6 @@ impl ServiceControl for FakeService {
     }
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 pub struct FakeLauncher {
     pub result: Mutex<Result<(), String>>,
     pub opened: Mutex<u32>,
@@ -300,14 +288,11 @@ impl Launcher for FakeLauncher {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Default)]
 pub struct FakeNotifier {
     pub sent: Mutex<Vec<Notification>>,
 }
 
-// Usado pelas tarefas seguintes (bandeja/notificações); até lá o código fica sem uso.
-#[allow(dead_code)]
 impl FakeNotifier {
     pub fn sent(&self) -> Vec<Notification> {
         self.sent.lock().unwrap().clone()
