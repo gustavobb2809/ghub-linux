@@ -3,6 +3,7 @@
 pub mod backend;
 pub mod battery_sysfs;
 pub mod mouse;
+pub mod notify;
 pub mod profile;
 pub mod topology;
 pub mod tray_icon;
