@@ -109,6 +109,7 @@ fn settle(this: &mut GhubTray, tx: &Sender<Request>, timeout: Duration, action: 
 /// vazia e um filho oculto a cada época. O `ksni` só emite `LayoutUpdated` quando a lista de
 /// filhos de algum item muda, e alguns hosts (ex.: Quickshell) ignoram `toggle-state` vindo
 /// por `ItemsPropertiesUpdated`; forçar o relayout faz o host reler o menu inteiro.
+/// Risco: um host que ignore `visible:false` mostraria uma linha vazia no fim (verificado no Quickshell do usuário: não mostra).
 fn layout_marker(epoch: u32) -> MenuItem<GhubTray> {
     let submenu = if epoch % 2 == 1 {
         vec![StandardItem {
