@@ -39,6 +39,27 @@ fi
 
 run systemctl --user daemon-reload
 
+# O dbus-broker só enxerga um arquivo de ativação novo depois de reler a
+# configuração (ou de um novo login). Falhar aqui não é fatal.
+reload_bus() {
+    if [ "$DRY" = 1 ]; then
+        echo "+ $*"
+        return 0
+    fi
+    if ! "$@"; then
+        echo "aviso: não foi possível pedir ao barramento da sessão que releia a configuração;" >&2
+        echo "       a ativação sob demanda pode só funcionar após um novo login." >&2
+    fi
+    return 0
+}
+reload_bus busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
+    org.freedesktop.DBus ReloadConfig
+
+if [ "$DRY" = 1 ]; then
+    echo "(simulação: nada foi alterado)"
+    exit 0
+fi
+
 echo "Instalado. Para iniciar agora:        systemctl --user start ghubd"
 echo "Para iniciar com a sessão (opcional): systemctl --user enable ghubd"
 echo "(ou use \"Iniciar com o sistema\" no menu da bandeja)"
