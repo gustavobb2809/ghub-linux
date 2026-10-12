@@ -1,0 +1,9 @@
+[package]
+name = "ghubctl"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+hidpp = { path = "../hidpp" }
+clap = { version = "4", features = ["derive"] }
