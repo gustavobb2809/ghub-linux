@@ -250,10 +250,16 @@ impl<B: Backend> Manager<B> {
 
     pub fn set_active_level(&mut self, id: &str, active: usize) -> Result<(), ManagerError> {
         let idx = self.find(id)?;
-        self.online_caps(idx)?;
+        let caps = self.online_caps(idx)?;
         let mut candidate = self.store.active().clone();
         candidate.active_level = active;
         candidate.check_shape()?;
+        let dpi = candidate.active_dpi();
+        if !dpi_allowed(&caps.dpi, dpi) {
+            return Err(ManagerError::Invalid(format!(
+                "DPI {dpi} não é suportado por este dispositivo"
+            )));
+        }
         self.commit_profile_change(idx, candidate)
     }
 
@@ -708,6 +714,23 @@ mod tests {
             m.set_active_level("dev-1", 5),
             Err(ManagerError::Invalid(_))
         ));
+    }
+
+    #[test]
+    fn set_active_level_rejects_a_dpi_the_device_does_not_support() {
+        // 125 passa no check_shape, mas está fora da grade 100..25600 passo 50.
+        let store = ProfileStore::from_toml(
+            "active = \"Padrão\"\n[[profile]]\nname = \"Padrão\"\ndpi_levels = [800, 125]\nactive_level = 0\npolling_hz = 1000\n",
+        )
+        .unwrap();
+        let (mut m, rx, mouse, _b, dir) = setup_with(store, 800, 1000);
+        m.rescan();
+        drain(&rx);
+        assert!(matches!(m.set_active_level("dev-1", 1), Err(ManagerError::Invalid(_))));
+        assert_eq!(m.store.active().active_level, 0);
+        assert!(mouse.state().dpi_sets.is_empty());
+        assert!(!dir.path().join("profiles.toml").exists());
+        assert!(drain(&rx).is_empty());
     }
 
     #[test]
