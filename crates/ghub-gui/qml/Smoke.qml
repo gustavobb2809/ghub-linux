@@ -11,6 +11,64 @@ QtObject {
     property var win: AppWindow { }
     property int tries: 0
 
+    // ---- capturas (cenario "shots"): `--shots <dir> --fake <cenario>` ----
+    readonly property string shotsDir: {
+        const a = Qt.application.arguments
+        const i = a.indexOf("--shots")
+        return i >= 0 && i + 1 < a.length ? a[i + 1] : ""
+    }
+    readonly property string fakeName: {
+        const a = Qt.application.arguments
+        const i = a.indexOf("--fake")
+        return i >= 0 && i + 1 < a.length ? a[i + 1] : "x"
+    }
+    property var plan: []
+    property int step: 0
+    property int shotPhase: 0
+    property int saved: 0
+    property int shotTicks: 0
+    readonly property var pageNames: ["visao-geral", "sensibilidade", "configuracoes"]
+
+    function buildPlan() {
+        const w = root.win, p = []
+        for (const sz of [[1280, 800], [900, 600]]) {
+            if (w.disconnectedVisible) { p.push({ sz: sz, page: 0, menu: false, name: "desconectado" }); continue }
+            for (let i = 0; i < 3; i++) p.push({ sz: sz, page: i, menu: false, name: root.pageNames[i] })
+            p.push({ sz: sz, page: 0, menu: true, name: "menu-perfil" })
+        }
+        return p
+    }
+
+    function shotTick() {
+        const b = root.win.backend
+        if (root.shotsDir === "") { Qt.exit(7); return }
+        if (root.plan.length === 0) {
+            if (b.daemonState === "connecting" || (b.daemonState === "running" && !b.hasDevice)) return
+            root.plan = root.buildPlan()
+            return
+        }
+        if (root.step >= root.plan.length) { Qt.exit(root.saved === root.plan.length ? 0 : 7); return }
+        const e = root.plan[root.step]
+        const w = root.win
+        if (root.shotPhase === 0) {
+            w.width = e.sz[0]; w.height = e.sz[1]
+            w.goTo(e.page)
+            if (e.menu) w.openProfileMenu(); else w.closeProfileMenu()
+            root.shotPhase = 1
+            return
+        }
+        if (root.shotPhase === 1) {
+            root.shotPhase = 2
+            const file = root.shotsDir + "/" + root.fakeName + "-" + e.name + "-" + e.sz[0] + "x" + e.sz[1] + ".png"
+            const ok = (e.menu ? w.menuItem() : w.shellItem()).grabToImage(function (r) {
+                if (r.saveToFile(file)) root.saved++
+                root.step++
+                root.shotPhase = 0
+            })
+            if (!ok) { Qt.exit(7) }
+        }
+    }
+
     function check() {
         const b = root.win.backend
         switch (root.scenario) {
@@ -40,6 +98,16 @@ QtObject {
             // mouse dormindo: controles desabilitados e nunca "0 DPI"
             return b.hasDevice && !b.connected && !root.win.sensitivityUsable()
                 && b.dpiText === "lendo…" && root.win.overviewDpiText() === "lendo…"
+        case "layout": {
+            // geometria no tamanho minimo (900x600): nada encolhido nem fora da janela
+            const w = root.win
+            w.width = 900; w.height = 600
+            if (!w.pagesVisible) return false
+            const r = w.layoutReport()
+            if (r.sidebar !== 236 || r.top !== 64 || r.tabs < 40 || r.main !== 900 - 236) return false
+            w.goTo(1)
+            return w.sensitivityMinTrack() >= 100 && w.sensitivityUsable()
+        }
         case "visible":
             return root.win.visible === true
         case "hidden":
@@ -92,10 +160,16 @@ QtObject {
     }
 
     property Timer poll: Timer {
-        interval: 100
+        interval: root.scenario === "shots" ? 300 : 100
         repeat: true
         running: root.scenario !== "fail"
         onTriggered: {
+            if (root.scenario === "shots") {
+                root.shotTicks++
+                root.shotTick()
+                if (root.shotTicks > 400) Qt.exit(7)
+                return
+            }
             root.tries++
             let ok = false
             try { ok = root.check() } catch (e) { ok = false }
