@@ -1,0 +1,70 @@
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn st() -> DeviceState {
+        DeviceState {
+            id: "m1".into(), name: "Mouse".into(), connected: true, dpi_current: 1600,
+            dpi_levels: vec![800, 1200, 3200], active_level: 1, dpi_min: 100, dpi_max: 25600, dpi_step: 50,
+            dpi_list: vec![], polling_hz: 1000, polling_supported: vec![125, 500, 1000],
+            battery_percent: 80, battery_state: "discharging".into(), profile: "default".into(),
+        }
+    }
+    fn sum(id: &str, connected: bool) -> DeviceSummary {
+        DeviceSummary { id: id.into(), name: id.into(), connected, battery_percent: 50, battery_state: String::new() }
+    }
+
+    #[test]
+    fn from_state_copies_fields() {
+        let s = st();
+        let v = DeviceView::from_state(&s);
+        assert_eq!(v.id, "m1");
+        assert_eq!(v.name, "Mouse");
+        assert!(v.connected);
+        assert_eq!(v.dpi_current, 1600);
+        assert_eq!(v.dpi_levels, vec![800, 1200, 3200]);
+        assert_eq!(v.active_level, 1);
+        assert_eq!(v.range, DpiRange::from_state(&s));
+        assert_eq!(v.polling_hz, 1000);
+        assert_eq!(v.polling_options, vec![125, 500, 1000]);
+        assert_eq!(v.battery_percent, 80);
+        assert_eq!(v.battery_state, "discharging");
+    }
+    #[test]
+    fn profile_differs_cases() {
+        let v = DeviceView::from_state(&st());
+        assert!(v.profile_differs()); // 1600 vs 1200
+        let mut z = v.clone(); z.dpi_current = 0;
+        assert!(!z.profile_differs());
+        let mut d = v.clone(); d.connected = false;
+        assert!(!d.profile_differs());
+        let mut o = v.clone(); o.active_level = 9;
+        assert!(!o.profile_differs());
+        let mut e = v.clone(); e.dpi_current = 1200;
+        assert!(!e.profile_differs());
+    }
+    #[test]
+    fn pick_device_preference() {
+        let list = vec![sum("a", false), sum("b", true), sum("c", true)];
+        assert_eq!(pick_device(&list, Some("c")).unwrap().id, "c");
+        assert_eq!(pick_device(&list, Some("zzz")).unwrap().id, "b");
+        assert_eq!(pick_device(&list, None).unwrap().id, "b");
+        let ghosts = vec![sum("a", false), sum("d", false)];
+        assert_eq!(pick_device(&ghosts, None).unwrap().id, "a");
+        assert!(pick_device(&[], None).is_none());
+    }
+    #[test]
+    fn with_levels_swaps_levels_and_active() {
+        let v = DeviceView::from_state(&st()).with_levels(Levels { levels: vec![400, 500], active: 0 });
+        assert_eq!(v.dpi_levels, vec![400, 500]);
+        assert_eq!(v.active_level, 0);
+        assert_eq!(v.levels(), Levels { levels: vec![400, 500], active: 0 });
+    }
+    #[test]
+    fn default_view_state_is_connecting_and_empty() {
+        let v = ViewState::default();
+        assert_eq!(v.status, DaemonStatus::Connecting);
+        assert!(v.device.is_none() && v.choices.is_empty());
+    }
+}
