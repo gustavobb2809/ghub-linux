@@ -13,6 +13,10 @@ impl DpiRange {
         DpiRange { min: s.dpi_min, max: s.dpi_max, step: s.dpi_step, list: s.dpi_list.clone() }
     }
 
+    fn max_msg(&self) -> String {
+        if self.max == 0 { "Faixa de DPI desconhecida.".into() } else { format!("O DPI máximo é {}.", self.max) }
+    }
+
     pub fn validate(&self, dpi: i64) -> Result<u32, String> {
         if self.max == 0 && self.list.is_empty() {
             return Err("Faixa de DPI desconhecida (mouse desconectado).".into());
@@ -20,12 +24,12 @@ impl DpiRange {
         if dpi <= 0 {
             return Err("Informe um DPI maior que zero.".into());
         }
-        let v = u32::try_from(dpi).map_err(|_| format!("O DPI máximo é {}.", self.max))?;
+        let v = u32::try_from(dpi).map_err(|_| self.max_msg())?;
         if !self.list.is_empty() {
             return if self.list.contains(&v) { Ok(v) } else { Err("Este DPI não é suportado pelo mouse.".into()) };
         }
         if v < self.min { return Err(format!("O DPI mínimo é {}.", self.min)); }
-        if v > self.max { return Err(format!("O DPI máximo é {}.", self.max)); }
+        if v > self.max { return Err(self.max_msg()); }
         if self.step > 0 && (v - self.min) % self.step != 0 {
             return Err(format!("Use múltiplos de {} (a partir de {}).", self.step, self.min));
         }
@@ -38,7 +42,7 @@ impl DpiRange {
         if self.step == 0 { return v; }
         let r = (v - self.min) % self.step;
         let down = v - r;
-        if r * 2 >= self.step && down + self.step <= self.max { down + self.step } else { down }
+        if r.saturating_mul(2) >= self.step && down + self.step <= self.max { down + self.step } else { down }
     }
 }
 
@@ -56,7 +60,9 @@ pub fn add_level(l: &Levels, r: &DpiRange) -> Result<Levels, String> {
     }
     let last = l.levels.last().copied().unwrap_or(r.min);
     let mut out = l.clone();
-    out.levels.push(r.snap(last.saturating_mul(2)));
+    let v = r.snap(last.saturating_mul(2));
+    r.validate(i64::from(v))?;
+    out.levels.push(v);
     Ok(out)
 }
 
@@ -116,6 +122,14 @@ mod tests {
         assert_eq!(r.snap(99999), 25600);
         let l = DpiRange { min: 100, max: 3200, step: 0, list: vec![400, 800, 1600] };
         assert_eq!(l.snap(1000), 800);
+    }
+    #[test]
+    fn add_level_never_adds_invalid_values() {
+        let l = Levels { levels: vec![400], active: 0 };
+        assert!(add_level(&l, &DpiRange::default()).is_err());
+        let inv = DpiRange { min: 800, max: 100, step: 50, list: vec![] };
+        assert!(add_level(&l, &inv).is_err());
+        assert_eq!(l.levels, vec![400]);
     }
     #[test]
     fn level_edits_respect_limits_and_active_index() {
