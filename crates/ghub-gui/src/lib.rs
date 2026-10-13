@@ -9,3 +9,5 @@ extern crate cxx;
 extern crate cxx_qt;
 #[cfg(feature = "qt")]
 extern crate cxx_qt_lib;
+
+pub mod model;
