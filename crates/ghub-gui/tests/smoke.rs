@@ -212,3 +212,13 @@ fn disconnected_shell_renders_when_daemon_is_stopped() {
 fn counter_proof_shots_fail_without_a_target_directory() {
     assert_eq!(shots("running", None), 7);
 }
+
+#[test]
+fn sidebar_logo_has_the_expected_size() {
+    assert_eq!(run("logo", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_logo_wrong_size_fails() {
+    assert_eq!(run("logo-wrong-size", Some("running")), 7);
+}

@@ -62,7 +62,8 @@ ApplicationWindow {
             const r = {
                 sidebar: sidebar.width, top: topBar.visible ? topBar.height : -1,
                 tabs: tabBar.visible ? tabBar.height : -1,
-                main: mainCol.width, content: content.height
+                main: mainCol.width, content: content.height,
+                logoW: brand.width, logoH: brand.height
             }
             return r
         }
@@ -79,19 +80,12 @@ ApplicationWindow {
             ColumnLayout {
                 anchors { fill: parent; leftMargin: 14; rightMargin: 15; topMargin: 20; bottomMargin: 20 }
                 spacing: 6
-                RowLayout {
+                Logo {
+                    id: brand
+                    objectName: "logo"
                     Layout.leftMargin: 8
                     Layout.bottomMargin: 18
-                    spacing: 10
-                    Rectangle { width: 26; height: 26; radius: 7; color: Theme.accent }
-                    Text {
-                        text: "G HUB Linux"
-                        color: Theme.fg
-                        font.family: Theme.ui
-                        font.pixelSize: 15
-                        font.weight: Font.DemiBold
-                        font.letterSpacing: 0.2
-                    }
+                    symbolSize: 30
                 }
                 Text {
                     Layout.leftMargin: 8
