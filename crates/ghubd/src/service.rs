@@ -1,12 +1,15 @@
 use std::sync::mpsc::{channel, Sender};
 use std::time::Duration;
 
-use ghub_ipc::{DeviceState, DeviceSummary};
+use ghub_ipc::{DeviceState, DeviceSummary, LedSetting};
+use hidpp::features::onboard::Led;
 use zbus::{fdo, interface};
 
 use crate::manager::{Command, ManagerError};
 
 pub const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Gravar o LED escreve na flash do mouse e demora mais que as outras chamadas.
+pub const LED_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn to_fdo(e: ManagerError) -> fdo::Error {
     match e {
@@ -80,6 +83,36 @@ impl DaemonService {
         let hz = to_u16(hz)?;
         let id = id.to_string();
         self.ask_result(|reply| Command::SetPolling { id, hz, reply })
+    }
+
+    fn led_effects(&self, id: &str) -> fdo::Result<Vec<String>> {
+        let id = id.to_string();
+        self.ask_result(|reply| Command::LedEffects { id, reply })
+    }
+
+    fn get_led(&self, id: &str) -> fdo::Result<LedSetting> {
+        let id = id.to_string();
+        let led = self.ask_result(|reply| Command::GetLed { id, reply })?;
+        let (effect, color, period_ms, intensity) = led.parts();
+        Ok(LedSetting {
+            effect: effect.to_string(),
+            color,
+            period_ms: u32::from(period_ms),
+            intensity: u32::from(intensity),
+        })
+    }
+
+    fn set_led(&self, id: &str, effect: &str, color: &str, period_ms: u32, intensity: u32) -> fdo::Result<()> {
+        let led = Led::from_parts(effect, color, period_ms, intensity).map_err(fdo::Error::InvalidArgs)?;
+        let id = id.to_string();
+        let (reply_tx, reply_rx) = channel();
+        self.tx
+            .send(Command::SetLed { id, led, reply: reply_tx })
+            .map_err(|_| fdo::Error::Failed("o gerente de dispositivos parou".into()))?;
+        reply_rx
+            .recv_timeout(self.timeout.max(LED_REPLY_TIMEOUT))
+            .map_err(|_| fdo::Error::Failed("o gerente de dispositivos não respondeu a tempo".into()))?
+            .map_err(to_fdo)
     }
 
     fn list_profiles(&self) -> fdo::Result<Vec<String>> {
@@ -207,5 +240,26 @@ mod tests {
         let (tx, _rx_kept_alive) = channel::<Command>();
         let svc = DaemonService::with_timeout(tx, Duration::from_millis(50));
         assert!(matches!(svc.devices(), Err(fdo::Error::Failed(_))));
+    }
+
+    #[test]
+    fn led_roundtrip_and_validation_over_the_service() {
+        let (svc, tx, handle, _d) = running_service();
+        assert_eq!(svc.led_effects("dev-1").unwrap(), vec!["off", "fixed", "cycle", "breathing"]);
+        let cur = svc.get_led("dev-1").unwrap();
+        assert_eq!((cur.effect.as_str(), cur.period_ms), ("cycle", 8000));
+        svc.set_led("dev-1", "fixed", "#FE8019", 0, 0).unwrap();
+        let cur = svc.get_led("dev-1").unwrap();
+        assert_eq!((cur.effect.as_str(), cur.color.as_str()), ("fixed", "#FE8019"));
+
+        let invalid = |r: fdo::Result<()>| matches!(r, Err(fdo::Error::InvalidArgs(_)));
+        assert!(invalid(svc.set_led("dev-1", "sparkle", "", 0, 0)));
+        assert!(invalid(svc.set_led("dev-1", "fixed", "#GGG", 0, 0)));
+        assert!(invalid(svc.set_led("dev-1", "fixed", "", 0, 0)));
+        assert!(invalid(svc.set_led("dev-1", "cycle", "", 0, 0)));
+        assert!(matches!(svc.get_led("nope"), Err(fdo::Error::UnknownObject(_))));
+        // Só a gravação boa chegou ao mouse.
+        assert_eq!(svc.get_led("dev-1").unwrap().effect, "fixed");
+        stop(tx, handle);
     }
 }
