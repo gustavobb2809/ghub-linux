@@ -6,6 +6,14 @@ fn main() {
             QmlFile::from("qml/Theme.qml").singleton(true),
             QmlFile::from("qml/Smoke.qml"),
             QmlFile::from("qml/AppWindow.qml"),
+            QmlFile::from("qml/components/Card.qml"),
+            QmlFile::from("qml/components/PillButton.qml"),
+            QmlFile::from("qml/components/NavTab.qml"),
+            QmlFile::from("qml/components/Toast.qml"),
+            QmlFile::from("qml/pages/Overview.qml"),
+            QmlFile::from("qml/pages/Sensitivity.qml"),
+            QmlFile::from("qml/pages/Settings.qml"),
+            QmlFile::from("qml/pages/Disconnected.qml"),
         ]))
         .files(["src/backend.rs"])
         .build();

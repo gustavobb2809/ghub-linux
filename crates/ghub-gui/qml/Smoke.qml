@@ -23,6 +23,32 @@ QtObject {
             return b.daemonState === "stopped" && !b.hasDevice
         case "sleeping":
             return b.hasDevice && !b.connected
+        case "pages": {
+            const w = root.win
+            if (w.pageCount !== 3 || w.disconnectedVisible) return false
+            for (let i = 0; i < 3; i++) {
+                w.goTo(i)
+                if (w.currentIndex !== i) return false
+            }
+            w.goTo(0)
+            return w.sensitivityLevelCount() === 3 && b.dpiText === "1200 DPI"
+                && w.overviewDpiText() === b.dpiText
+        }
+        case "disconnected":
+            return root.win.disconnectedVisible && root.win.currentIndex === 0
+        case "dimmed":
+            // mouse dormindo: controles desabilitados e nunca "0 DPI"
+            return b.hasDevice && !b.connected && !root.win.sensitivityUsable()
+                && root.win.overviewDpiText().indexOf("0 DPI") < 0
+        case "release": {
+            // soltar o slider e terminar a edicao do campo chamam commitDpi
+            const w = root.win
+            if (!b.hasDevice || !w.sensitivityUsable()) return false
+            w.sensitivityRelease(0)
+            if (w.sensitivityCommits() !== 1) return false
+            w.sensitivityEdit(0, "1000")
+            return w.sensitivityCommits() === 2 && b.dpiLevelsJson.startsWith("[1000,")
+        }
         case "edit":
             // otimista: a propriedade muda na hora, sem esperar o daemon
             if (!b.hasDevice) return false

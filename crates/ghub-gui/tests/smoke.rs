@@ -59,3 +59,43 @@ fn counter_proof_sleeping_smoke_fails_when_mouse_is_awake() {
 fn counter_proof_stopped_smoke_fails_when_daemon_runs() {
     assert_eq!(run("stopped", Some("running")), 7);
 }
+
+#[test]
+fn pages_scenario_navigates_and_reaches_the_ui() {
+    assert_eq!(run("pages", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_pages_fails_when_daemon_is_stopped() {
+    assert_eq!(run("pages", Some("stopped")), 7);
+}
+
+#[test]
+fn disconnected_page_shows_when_daemon_is_stopped() {
+    assert_eq!(run("disconnected", Some("stopped")), 0);
+}
+
+#[test]
+fn counter_proof_disconnected_fails_when_daemon_runs() {
+    assert_eq!(run("disconnected", Some("running")), 7);
+}
+
+#[test]
+fn sleeping_mouse_disables_controls_and_never_shows_zero_dpi() {
+    assert_eq!(run("dimmed", Some("sleeping")), 0);
+}
+
+#[test]
+fn counter_proof_dimmed_fails_when_mouse_is_awake() {
+    assert_eq!(run("dimmed", Some("running")), 7);
+}
+
+#[test]
+fn slider_release_and_field_edit_commit_the_dpi() {
+    assert_eq!(run("release", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_release_fails_when_mouse_is_asleep() {
+    assert_eq!(run("release", Some("sleeping")), 7);
+}
