@@ -164,23 +164,116 @@ pub trait Launcher: Send + Sync {
     fn open_gui(&self) -> Result<(), String>;
 }
 
-/// Abre a interface gráfica (`ghub-gui`, do Plano 4) se ela estiver instalada.
+/// Texto máximo de stderr guardado do filho.
+const STDERR_LIMIT: usize = 2048;
+/// Quanto tempo o filho tem para falhar antes de o lançamento ser dado como bem-sucedido.
+const LAUNCH_WINDOW: Duration = Duration::from_millis(1500);
+const POLL_STEP: Duration = Duration::from_millis(50);
+const NOT_INSTALLED: &str = "a interface gráfica (ghub-gui) ainda não está instalada";
+
+/// Argumentos do `systemd-run`: a GUI roda num escopo transitório próprio, fora do cgroup do
+/// daemon (herda o ambiente gráfico da sessão e sobrevive a um restart do `ghubd`).
+pub(crate) fn scope_args() -> [&'static str; 5] {
+    ["--user", "--scope", "--collect", "--quiet", "ghub-gui"]
+}
+
+/// Texto legível para uma falha de lançamento, nunca vazio.
+pub(crate) fn launch_failure_text(stderr: &str, status: &str) -> String {
+    if stderr.contains("No such file") {
+        return NOT_INSTALLED.into();
+    }
+    match stderr.lines().map(str::trim).find(|l| !l.is_empty()) {
+        Some(line) => line.into(),
+        None => format!("a interface saiu com {status}"),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Watch {
+    /// O programa não existe.
+    NotFound,
+    /// Falhou ao iniciar ou saiu com erro logo no começo (texto já legível).
+    Failed(String),
+}
+
+/// Inicia `program`, acompanha-o por `window` e diz se ele falhou cedo. Saída com sucesso ou
+/// ainda rodando ao fim da janela é `Ok`; nesse caso uma thread recolhe o filho depois.
+fn spawn_and_watch(program: &str, args: &[&str], window: Duration) -> Result<(), Watch> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+
+    let mut child = Process::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Watch::NotFound,
+            _ => Watch::Failed(format!("não foi possível abrir a interface: {e}")),
+        })?;
+
+    // Drena o stderr até o EOF (para o filho nunca travar na escrita), guardando só o começo.
+    let captured = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let (eof_tx, eof_rx) = channel::<()>();
+    if let Some(mut stderr) = child.stderr.take() {
+        let captured = Arc::clone(&captured);
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 512];
+            while let Ok(n) = stderr.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                if let Ok(mut buf) = captured.lock() {
+                    let room = STDERR_LIMIT.saturating_sub(buf.len());
+                    buf.extend_from_slice(&chunk[..n.min(room)]);
+                }
+            }
+            let _ = eof_tx.send(());
+        });
+    }
+
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                // Dá um instante à thread de drenagem para chegar ao EOF.
+                let _ = eof_rx.recv_timeout(Duration::from_millis(300));
+                let text = captured.lock().map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+                return Err(Watch::Failed(launch_failure_text(&text, &status.to_string())));
+            }
+            Ok(None) if started.elapsed() >= window => break,
+            Ok(None) => std::thread::sleep(POLL_STEP),
+            Err(e) => return Err(Watch::Failed(format!("não foi possível acompanhar a interface: {e}"))),
+        }
+    }
+    // Ainda rodando: recolhe o processo depois, para não deixar zumbi.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+/// Lança `program` direto, com texto legível para o `NotFound`.
+fn launch_direct(program: &str, args: &[&str], window: Duration) -> Result<(), String> {
+    spawn_and_watch(program, args, window).map_err(|w| match w {
+        Watch::NotFound => NOT_INSTALLED.to_string(),
+        Watch::Failed(t) => t,
+    })
+}
+
+/// Abre a interface gráfica (`ghub-gui`) num escopo transitório do systemd de usuário; sem
+/// `systemd-run`, cai para o lançamento direto.
 pub struct GuiLauncher;
 
 impl Launcher for GuiLauncher {
     fn open_gui(&self) -> Result<(), String> {
-        match Process::new("ghub-gui").spawn() {
-            Ok(mut child) => {
-                // Recolhe o processo filho para não deixar zumbi.
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                });
-                Ok(())
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Err("a interface gráfica (ghub-gui) ainda não está instalada".into())
-            }
-            Err(e) => Err(format!("não foi possível abrir a interface: {e}")),
+        match spawn_and_watch("systemd-run", &scope_args(), LAUNCH_WINDOW) {
+            Err(Watch::NotFound) => launch_direct("ghub-gui", &[], LAUNCH_WINDOW),
+            Err(Watch::Failed(t)) => Err(t),
+            Ok(()) => Ok(()),
         }
     }
 }
@@ -192,6 +285,71 @@ mod tests {
     use crate::profile::ProfileStore;
     use crate::testing::{FakeBackend, FakeMouse};
     use std::thread;
+
+    #[test]
+    fn scope_command_runs_the_gui_in_its_own_scope() {
+        assert_eq!(scope_args(), ["--user", "--scope", "--collect", "--quiet", "ghub-gui"]);
+    }
+
+    #[test]
+    fn launch_failure_text_is_readable_and_never_empty() {
+        assert!(launch_failure_text("Failed to execute ghub-gui: No such file or directory", "exit status: 1")
+            .contains("ainda não está instalada"));
+        assert_eq!(
+            launch_failure_text("qt.qpa.xcb: could not connect to display\nmais\n", "exit status: 1"),
+            "qt.qpa.xcb: could not connect to display"
+        );
+        assert_eq!(launch_failure_text("  \n", "exit status: 3"), "a interface saiu com exit status: 3");
+    }
+
+    // Os testes abaixo usam comandos inofensivos (`sh`, `true`, `sleep`), nunca o systemd nem a GUI.
+    const WINDOW: Duration = Duration::from_millis(1500);
+
+    #[test]
+    fn early_failure_reports_stderr_text() {
+        let r = spawn_and_watch("sh", &["-c", "echo erro-de-teste >&2; exit 3"], WINDOW);
+        assert_eq!(r, Err(Watch::Failed("erro-de-teste".into())));
+    }
+
+    #[test]
+    fn early_failure_without_stderr_reports_the_status() {
+        match spawn_and_watch("sh", &["-c", "exit 3"], WINDOW) {
+            Err(Watch::Failed(t)) => assert!(t.starts_with("a interface saiu com"), "{t}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn early_success_is_ok() {
+        assert_eq!(spawn_and_watch("true", &[], WINDOW), Ok(()));
+    }
+
+    #[test]
+    fn still_running_after_the_window_is_ok() {
+        let start = std::time::Instant::now();
+        let r = spawn_and_watch("sleep", &["3"], Duration::from_millis(200));
+        assert_eq!(r, Ok(()));
+        assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn noisy_stderr_is_bounded_and_does_not_hang_the_child() {
+        // ~200 KiB em stderr: o filho não pode travar na escrita e o texto fica limitado.
+        let r = spawn_and_watch("sh", &["-c", "head -c 200000 /dev/zero | tr '\\0' x >&2; exit 1"], WINDOW);
+        match r {
+            Err(Watch::Failed(t)) => assert!(t.len() <= STDERR_LIMIT, "{}", t.len()),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_program_is_not_found_and_readable() {
+        assert_eq!(spawn_and_watch("ghub-programa-que-nao-existe", &[], WINDOW), Err(Watch::NotFound));
+        assert_eq!(
+            launch_direct("ghub-programa-que-nao-existe", &[], WINDOW),
+            Err("a interface gráfica (ghub-gui) ainda não está instalada".to_string())
+        );
+    }
 
     #[test]
     fn parses_systemctl_is_enabled_output() {

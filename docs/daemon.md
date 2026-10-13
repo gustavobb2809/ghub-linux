@@ -192,7 +192,7 @@ O daemon publica um ícone na bandeja (StatusNotifierItem, via crate `ksni`, sem
 | Abrir G HUB Linux | Abre a GUI (igual ao clique esquerdo no ícone). |
 | Sair e parar o serviço | Encerra o daemon (ver abaixo). |
 
-Clique esquerdo no ícone abre a GUI (`ghub-gui`). Ela só existe a partir do Plano 4; até lá, uma notificação avisa que a interface gráfica ainda não está instalada. Falhas das ações do menu (DPI, perfil, autostart, parar) também viram notificação.
+Clique esquerdo no ícone abre a GUI (`ghub-gui`) por `systemd-run --user --scope --collect --quiet ghub-gui`: a GUI roda num escopo transitório próprio, fora do cgroup do daemon (herda o ambiente gráfico da sessão e sobrevive a um restart do `ghubd`). Sem `systemd-run`, o daemon lança `ghub-gui` direto. O `ghubd` acompanha o processo por 1,5 s: se ele sair com erro nesse prazo, a primeira linha do stderr (limitado a 2 KiB) vira notificação; se o `ghub-gui` não existir, a notificação avisa que a interface ainda não está instalada. A segunda abertura é tratada pela própria GUI (instância única), sem mudança no `ghubd`. Falhas das ações do menu (DPI, perfil, autostart, parar) também viram notificação.
 
 O tooltip traz o nome do dispositivo e "`<bateria>` · `<dpi>` DPI" (ou "Inativo ou dormindo · `<bateria>`"). Nem todo host desenha tooltips: o Quickshell da verificação não desenha.
 
@@ -265,7 +265,7 @@ A bandeja, as notificações, o autostart e a ativação sob demanda foram verif
 - **Mouse dormindo aparece offline**: só é redetectado no ciclo de 5 s; depois de acordar pode levar até um ciclo mais o tempo da varredura para voltar. Se o daemon iniciar com o mouse dormindo, ele fica com 0 dispositivos até o mouse acordar.
 - **`ProfileChanged` em criar/apagar** traz o nome do perfil ativo (que não muda); clientes devem chamar `ListProfiles` de novo ao receber o sinal.
 - **Timeout não cancela**: um comando que estoura os 5 s devolve `Failed`, mas continua na fila do gerente e ainda pode ser aplicado depois.
-- Sem GUI ainda (Plano 4); o limite de bateria baixa é fixo na v1 (aviso em 15%, rearma em 20%).
+- O limite de bateria baixa é fixo na v1 (aviso em 15%, rearma em 20%).
 
 ## Pendências para os Planos 3 e 4
 
@@ -277,7 +277,7 @@ A bandeja, as notificações, o autostart e a ativação sob demanda foram verif
 6. **Limite de bateria baixa configurável** (spec 5.3), ou calculado na bandeja.
 7. **Teste opcional somente leitura no hardware** (`--features hardware`, spec seção 9) ainda falta.
 8. **GUI**: validar o DPI contra `dpi_min`/`dpi_max`/`dpi_step`/`dpi_list`; tratar `dpi_current == 0` com o dispositivo conectado; esconder ou marcar fantasmas com `connected=false` (dispositivos nunca são removidos); reler a lista de perfis em `ProfileChanged` (criar/apagar trazem o nome do ativo).
-9. **Abrir a GUI pela bandeja** (Plano 4): o `GuiLauncher` roda `ghub-gui` dentro do cgroup do serviço (herda o ambiente do daemon, pode faltar `WAYLAND_DISPLAY`; sair/reiniciar o daemon mata a GUI). Lançar via `systemd-run --user --scope` e reportar falhas do processo filho.
+9. ~~**Abrir a GUI pela bandeja**~~: resolvido no Plano 4 (lançamento por `systemd-run --user --scope`, falhas iniciais reportadas).
 10. **Varredura bloqueia o gerente**: a thread única fica presa durante uma varredura lenta e um comando D-Bus nesse meio-tempo pode estourar os 5 s (visto na primeira ativação sob demanda).
 11. **Tooltip**: não desenhado pelo Quickshell do usuário (limitação do host); conferir em outros hosts.
 12. **Bandeja, pendências dos reviews**: o refresher sobrevive ao fim da bandeja; `Shutdown` redundante antes do `exit(0)`; a drenagem do refresher pode atrasar sob fluxo contínuo de eventos (GUI com slider); rádios habilitados dentro de submenu desabilitado; corrida rara (≈1 % ou menos) em que o refresher aplica uma vista calculada antes da ação; pânico em `build_view`/`execute` encerra só a thread de ações; o valor de 800 ms (`SETTLE_TIMEOUT`) não tem teste de constante; o clique bloqueia toda a thread do `ksni` por até 800 ms; um comentário a ajustar.
