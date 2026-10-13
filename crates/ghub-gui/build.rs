@@ -12,6 +12,10 @@ fn main() {
         // nao depende da lib). Ligamos tudo ao binario aqui: o modulo QML
         // gerado e os inicializadores precisam de whole-archive porque
         // registram recursos/plugin por inicializadores estaticos.
+        // ATENCAO: esta lista (nomes dos archives, que derivam do nome da crate,
+        // e as libs Qt6) e fixa. Toda task que adicionar modulos QML ou
+        // `.files()` do cxx-qt deve atualiza-la. A descoberta do Qt NAO e via
+        // pkg-config/qmake.
         let out = std::env::var("OUT_DIR").unwrap();
         for lib in [
             "cxx-qt-call-init-qml_module_org_ghublinux_gui",
