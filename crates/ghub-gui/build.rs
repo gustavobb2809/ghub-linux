@@ -5,27 +5,17 @@ fn main() {
         CxxQtBuilder::new_qml_module(QmlModule::new("org.ghublinux.gui").qml_files([
             QmlFile::from("qml/Theme.qml").singleton(true),
             QmlFile::from("qml/Smoke.qml"),
+            QmlFile::from("qml/AppWindow.qml"),
         ]))
+        .files(["src/backend.rs"])
         .build();
 
-        // O cargo so repassa os `-l` deste build script ao alvo lib (o binario
-        // nao depende da lib). Ligamos tudo ao binario aqui: o modulo QML
-        // gerado e os inicializadores precisam de whole-archive porque
-        // registram recursos/plugin por inicializadores estaticos.
-        // ATENCAO: esta lista (nomes dos archives, que derivam do nome da crate,
-        // e as libs Qt6) e fixa. Toda task que adicionar modulos QML ou
-        // `.files()` do cxx-qt deve atualiza-la. A descoberta do Qt NAO e via
-        // pkg-config/qmake.
-        let out = std::env::var("OUT_DIR").unwrap();
-        for lib in [
-            "cxx-qt-call-init-qml_module_org_ghublinux_gui",
-            "cxx-qt-call-init-crate_ghub_gui",
-            "ghub-gui-cxxqt-generated",
-        ] {
-            println!(
-                "cargo::rustc-link-arg-bins=-Wl,--whole-archive,{out}/lib{lib}.a,--no-whole-archive"
-            );
-        }
+        // `src/backend.rs` (ponte cxx-qt) vive na LIB; o cxx-qt-build emite os
+        // `rustc-link-lib` dos archives gerados (QML, inicializadores) para o
+        // alvo lib, e o binario os herda via rlib. NAO religue esses archives
+        // ao binario (gera "multiple definition"). So as libs Qt6 abaixo sao
+        // repassadas ao binario; a lista e fixa (nao ha pkg-config/qmake):
+        // atualize-a se passar a usar outros modulos Qt.
         for l in ["Qt6QuickControls2", "Qt6Qml", "Qt6Gui", "Qt6Core", "stdc++"] {
             println!("cargo::rustc-link-arg-bins=-l{l}");
         }

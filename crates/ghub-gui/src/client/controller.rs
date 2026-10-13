@@ -323,6 +323,22 @@ mod tests {
     }
 
     #[test]
+    fn refresh_command_flushes_the_pending_edit_at_once() {
+        // Soltar o slider (commitDpi) usa Command::Refresh para gravar sem esperar o debounce.
+        let d = Arc::new(FakeDaemon::new());
+        let (tx, urx, h) = rig_slow_debounce(d.clone());
+        next_state(&urx);
+        cmd(&tx, Command::SetDpiLevels { levels: vec![900, 1200, 1600], active: 1 });
+        cmd(&tx, Command::Refresh);
+        let t0 = Instant::now();
+        wait_for_call(&d, "set_dpi_levels");
+        assert!(t0.elapsed() < Duration::from_millis(200), "esperou o debounce");
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(count(&d, "set_dpi_levels"), 1);
+        finish(tx, h);
+    }
+
+    #[test]
     fn refresh_during_debounce_does_not_revert_the_edit() {
         let d = Arc::new(FakeDaemon::new());
         let (tx, urx, h) = rig_slow_debounce(d.clone());

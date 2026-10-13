@@ -12,3 +12,5 @@ extern crate cxx_qt_lib;
 
 pub mod model;
 pub mod client;
+#[cfg(feature = "qt")]
+pub mod backend;
