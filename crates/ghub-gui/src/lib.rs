@@ -11,3 +11,4 @@ extern crate cxx_qt;
 extern crate cxx_qt_lib;
 
 pub mod model;
+pub mod client;
