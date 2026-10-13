@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ghub
+GenericName=Configuração de mouse
+Comment=Configure o mouse Logitech sem o G HUB
+Exec=@BINDIR@/ghub-gui
+Icon=org.ghublinux.Gui
+Terminal=false
+Categories=Settings;HardwareSettings;
+StartupWMClass=ghub-gui
+Keywords=mouse;dpi;logitech;

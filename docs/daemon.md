@@ -23,7 +23,7 @@ systemctl --user start ghubd    # inicia agora
 systemctl --user enable ghubd   # inicia com a sessão (opcional)
 ```
 
-`packaging/install-user.sh --dry-run` só imprime os comandos (linhas `+ ...`) e termina com `(simulação: nada foi alterado)`; qualquer outro argumento mostra o uso e sai com código 2.
+O script também compila e instala a interface (`ghub-gui`, o `.desktop` e o ícone em `~/.local/share`; ver `docs/gui.md`); `--no-gui` pula essa parte e `CARGO_TARGET_DIR` é respeitado. `packaging/install-user.sh --dry-run` só imprime os comandos (linhas `+ ...`) e termina com `(simulação: nada foi alterado)`; `--dry-run` e `--no-gui` combinam em qualquer ordem e qualquer outro argumento mostra o uso e sai com código 2.
 
 A unit é `Type=dbus` com `BusName=org.ghublinux.Daemon` e `Restart=on-failure`.
 
@@ -282,4 +282,4 @@ A bandeja, as notificações, o autostart e a ativação sob demanda foram verif
 11. **Tooltip**: não desenhado pelo Quickshell do usuário (limitação do host); conferir em outros hosts.
 12. **Bandeja, pendências dos reviews**: o refresher sobrevive ao fim da bandeja; `Shutdown` redundante antes do `exit(0)`; a drenagem do refresher pode atrasar sob fluxo contínuo de eventos (GUI com slider); rádios habilitados dentro de submenu desabilitado; corrida rara (≈1 % ou menos) em que o refresher aplica uma vista calculada antes da ação; pânico em `build_view`/`execute` encerra só a thread de ações; o valor de 800 ms (`SETTLE_TIMEOUT`) não tem teste de constante; o clique bloqueia toda a thread do `ksni` por até 800 ms; um comentário a ajustar.
 13. **Instalador**: o `sed` usa `|` como separador e quebra se o `HOME` contiver `|`.
-14. **Pendências menores conhecidas**: a primeira execução com 2+ dispositivos semeia só a partir do primeiro; o `.bak` é sobrescrito por uma segunda corrupção; o arquivo temporário fica para trás depois de um save que falhou e não há `fsync` do diretório; o monitor udev só termina depois do próximo evento udev; o script de instalação presume o `CARGO_TARGET_DIR` padrão; permissão negada vai para o log a cada varredura (registrar uma vez por nó e tipo de erro).
+14. **Pendências menores conhecidas**: a primeira execução com 2+ dispositivos semeia só a partir do primeiro; o `.bak` é sobrescrito por uma segunda corrupção; o arquivo temporário fica para trás depois de um save que falhou e não há `fsync` do diretório; o monitor udev só termina depois do próximo evento udev; permissão negada vai para o log a cada varredura (registrar uma vez por nó e tipo de erro).
