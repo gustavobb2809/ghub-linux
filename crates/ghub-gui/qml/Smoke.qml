@@ -8,7 +8,7 @@ QtObject {
         const i = a.indexOf("--smoke")
         return i >= 0 && i + 1 < a.length ? a[i + 1] : ""
     }
-    property var win: AppWindow { visible: true }
+    property var win: AppWindow { }
     property int tries: 0
 
     function check() {
@@ -40,6 +40,20 @@ QtObject {
             // mouse dormindo: controles desabilitados e nunca "0 DPI"
             return b.hasDevice && !b.connected && !root.win.sensitivityUsable()
                 && b.dpiText === "lendo…" && root.win.overviewDpiText() === "lendo…"
+        case "visible":
+            return root.win.visible === true
+        case "hidden":
+            return root.win.visible === false
+        case "badtext": {
+            // texto nao puramente numerico ou acima de 2^31-1 e rejeitado, sem escrever
+            const w = root.win
+            if (!b.hasDevice || !w.sensitivityUsable()) return false
+            w.sensitivityEdit(0, "800abc")
+            if (w.sensitivityRowError() === "" || w.sensitivityFieldText(0) !== "800") return false
+            w.sensitivityEdit(0, "4294968496")
+            return w.sensitivityRowError() !== "" && w.sensitivityFieldText(0) !== "1200"
+                && w.sensitivityCommits() === 0 && b.dpiLevelsJson.startsWith("[800,")
+        }
         case "nav": {
             // clicar na aba ativa nao a desmarca (nem a torna "checkable")
             const w = root.win

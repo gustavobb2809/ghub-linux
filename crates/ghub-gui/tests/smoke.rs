@@ -124,3 +124,44 @@ fn counter_proof_rebind_fails_when_mouse_is_asleep() {
 fn qml_load_failure_exits_with_code_1_instead_of_hanging() {
     assert_eq!(run("load-failure", Some("running")), 1);
 }
+
+#[test]
+fn window_is_visible_by_default() {
+    assert_eq!(run("visible", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_hidden_expectation_fails() {
+    assert_eq!(run("hidden", Some("running")), 7);
+}
+
+#[test]
+fn non_numeric_or_overflowing_dpi_text_is_rejected() {
+    assert_eq!(run("badtext", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_badtext_fails_when_mouse_is_asleep() {
+    assert_eq!(run("badtext", Some("sleeping")), 7);
+}
+
+#[test]
+fn smoke_without_fake_exits_2_for_backend_scenarios() {
+    assert_eq!(run("running", None), 2);
+}
+
+#[test]
+fn bare_smoke_flag_exits_2() {
+    let code = Command::new(env!("CARGO_BIN_EXE_ghub-gui"))
+        .arg("--smoke")
+        .env("QT_QPA_PLATFORM", "offscreen")
+        .status()
+        .unwrap()
+        .code();
+    assert_eq!(code, Some(2));
+}
+
+#[test]
+fn backendless_smoke_runs_without_fake() {
+    assert_eq!(run("theme", None), 0);
+}

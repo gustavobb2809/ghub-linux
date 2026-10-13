@@ -113,6 +113,8 @@ use std::thread::JoinHandle;
 
 pub enum Mode {
     Real,
+    /// Sem daemon: `start()` nao faz nada (smokes que nao precisam de backend).
+    Idle,
     #[cfg(feature = "fake-daemon")]
     Fake(String),
 }
@@ -251,6 +253,9 @@ impl qobject::Backend {
             return;
         }
         let Some(mode) = MODE.get() else { return };
+        if matches!(mode, Mode::Idle) {
+            return;
+        }
         let (tx, rx) = channel::<Msg>();
         let api: Arc<dyn DaemonApi> = match mode {
             Mode::Real => match crate::client::real::RealDaemon::connect() {
@@ -262,9 +267,11 @@ impl qobject::Backend {
                 }
                 Err(e) => {
                     self.as_mut().set_last_error(QString::from(format!("Sem barramento de sessão: {e}").as_str()));
+                    self.as_mut().set_daemon_state(QString::from("stopped"));
                     return;
                 }
             },
+            Mode::Idle => return,
             #[cfg(feature = "fake-daemon")]
             Mode::Fake(s) => Arc::new(crate::client::fake::FakeDaemon::scenario(s)),
         };

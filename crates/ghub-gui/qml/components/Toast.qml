@@ -22,7 +22,9 @@ Rectangle {
         font.pixelSize: 13
     }
     MouseArea { anchors.fill: parent; onClicked: toast.dismissed() }
+    onTextChanged: if (visible) hideTimer.restart()
     Timer {
+        id: hideTimer
         interval: 5000
         running: toast.visible
         repeat: false

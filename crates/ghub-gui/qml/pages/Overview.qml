@@ -73,9 +73,11 @@ Item {
                 title: "Bateria"
                 Text {
                     text: page.backend.batteryText
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
                     color: page.backend.batteryLow ? Theme.bad : Theme.fg
                     font.family: Theme.monoFonts[0]
-                    font.pixelSize: 28
+                    font.pixelSize: text.length > 6 ? 18 : 28
                 }
             }
             Card {
@@ -85,6 +87,8 @@ Item {
                 Text {
                     id: dpiValue
                     text: page.backend.dpiText
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
                     color: Theme.accent
                     font.family: Theme.monoFonts[0]
                     font.pixelSize: 28
@@ -96,6 +100,8 @@ Item {
                 title: "Polling"
                 Text {
                     text: page.backend.pollingText
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
                     color: Theme.fg
                     font.family: Theme.monoFonts[0]
                     font.pixelSize: 28

@@ -13,6 +13,17 @@ fn main() {
     let smoke = arg_value(&args, "--smoke");
     let fake = arg_value(&args, "--fake");
 
+    // `--smoke` sem nome: nunca cai para o modo de producao.
+    if args.iter().any(|a| a == "--smoke") && smoke.as_deref().map_or(true, |s| s.is_empty() || s.starts_with("--")) {
+        eprintln!("ghub-gui: --smoke exige o nome do cenario");
+        std::process::exit(2);
+    }
+    // Cenarios sem backend (nao iniciam o Backend); os demais exigem --fake para nao tocar o barramento real.
+    let no_backend = matches!(smoke.as_deref(), Some("theme" | "fail" | "load-failure"));
+    if smoke.is_some() && fake.is_none() && !no_backend {
+        eprintln!("ghub-gui: --smoke {} exige --fake <cenario>", smoke.as_deref().unwrap_or(""));
+        std::process::exit(2);
+    }
     let mode = match fake {
         #[cfg(feature = "fake-daemon")]
         Some(scenario) => Mode::Fake(scenario),
@@ -21,6 +32,7 @@ fn main() {
             eprintln!("ghub-gui: --fake exige um binario compilado com a feature fake-daemon (compilado sem fake-daemon)");
             std::process::exit(2);
         }
+        None if smoke.is_some() => Mode::Idle,
         None => Mode::Real,
     };
     let _ = MODE.set(mode);
@@ -50,6 +62,7 @@ fn main() {
     cxx_qt::init_crate!(cxx_qt_lib);
     cxx_qt::init_crate!(ghub_gui);
     cxx_qt::init_qml_module!("org.ghublinux.gui");
+    QGuiApplication::set_desktop_file_name(&cxx_qt_lib::QString::from("org.ghublinux.Gui"));
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
     if let Some(mut engine) = engine.as_mut() {
@@ -65,6 +78,8 @@ fn main() {
     let code = app.as_mut().map(|a| a.exec()).unwrap_or(1);
     // Destroi o motor (o Backend envia Quit) e espera o controller gravar a edicao pendente.
     drop(engine);
+    // Libera o nome na sessao antes de esperar a gravacao pendente (um novo lancamento nao e engolido).
+    drop(_primary);
     let handle = backend::CONTROLLER.lock().ok().and_then(|mut g| g.take());
     if let Some(h) = handle {
         let _ = h.join();

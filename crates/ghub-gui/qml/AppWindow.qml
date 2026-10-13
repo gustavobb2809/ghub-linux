@@ -7,6 +7,7 @@ ApplicationWindow {
     id: win
     width: 1280; height: 800; minimumWidth: 900; minimumHeight: 600
     title: "ghub"
+    visible: true
     color: Theme.bg
     font.family: Theme.uiFonts[0]
 
@@ -21,6 +22,7 @@ ApplicationWindow {
     function sensitivityLevelCount() { return sensitivity.levelCount }
     function navTab(i) { return [nav0, nav1, nav2][i] }
     function sensitivityFieldText(i) { return sensitivity.fieldText(i) }
+    function sensitivityRowError() { return sensitivity.rowError }
     function sensitivityUsable() { return sensitivity.usable }
     function sensitivityCommits() { return sensitivity.commits }
     function sensitivityRelease(i) { sensitivity.simulateRelease(i) }
@@ -29,7 +31,7 @@ ApplicationWindow {
 
     Backend {
         id: backend
-        onActivateRequested: { win.show(); win.raise(); win.requestActivate() }
+        onActivateRequested: { if (win.visibility === Window.Minimized) win.showNormal(); win.show(); win.raise(); win.requestActivate() }
         Component.onCompleted: backend.start()
     }
 

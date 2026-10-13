@@ -173,8 +173,19 @@ const NOT_INSTALLED: &str = "a interface gráfica (ghub-gui) ainda não está in
 
 /// Argumentos do `systemd-run`: a GUI roda num escopo transitório próprio, fora do cgroup do
 /// daemon (herda o ambiente gráfico da sessão e sobrevive a um restart do `ghubd`).
-pub(crate) fn scope_args() -> [&'static str; 5] {
-    ["--user", "--scope", "--collect", "--quiet", "ghub-gui"]
+pub(crate) fn scope_args(program: &str) -> [&str; 5] {
+    ["--user", "--scope", "--collect", "--quiet", program]
+}
+
+/// Programa da GUI: o irmão `ghub-gui` do executável atual, se existir (caminho absoluto, pois o
+/// escopo não depende do PATH do daemon); senão `ghub-gui` pelo PATH.
+pub(crate) fn gui_program(current_exe: Option<&std::path::Path>) -> String {
+    current_exe
+        .and_then(|e| e.parent())
+        .map(|d| d.join("ghub-gui"))
+        .filter(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "ghub-gui".to_string())
 }
 
 /// Texto legível para uma falha de lançamento, nunca vazio.
@@ -270,8 +281,10 @@ pub struct GuiLauncher;
 
 impl Launcher for GuiLauncher {
     fn open_gui(&self) -> Result<(), String> {
-        match spawn_and_watch("systemd-run", &scope_args(), LAUNCH_WINDOW) {
-            Err(Watch::NotFound) => launch_direct("ghub-gui", &[], LAUNCH_WINDOW),
+        let exe = std::env::current_exe().ok();
+        let program = gui_program(exe.as_deref());
+        match spawn_and_watch("systemd-run", &scope_args(&program), LAUNCH_WINDOW) {
+            Err(Watch::NotFound) => launch_direct(&program, &[], LAUNCH_WINDOW),
             Err(Watch::Failed(t)) => Err(t),
             Ok(()) => Ok(()),
         }
@@ -288,7 +301,19 @@ mod tests {
 
     #[test]
     fn scope_command_runs_the_gui_in_its_own_scope() {
-        assert_eq!(scope_args(), ["--user", "--scope", "--collect", "--quiet", "ghub-gui"]);
+        assert_eq!(scope_args("/x/ghub-gui"), ["--user", "--scope", "--collect", "--quiet", "/x/ghub-gui"]);
+    }
+
+    #[test]
+    fn gui_program_prefers_the_sibling_binary() {
+        let dir = std::env::temp_dir().join(format!("ghub-gui-prog-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("ghubd");
+        assert_eq!(gui_program(Some(&exe)), "ghub-gui");
+        std::fs::write(dir.join("ghub-gui"), b"").unwrap();
+        assert_eq!(gui_program(Some(&exe)), dir.join("ghub-gui").to_string_lossy());
+        assert_eq!(gui_program(None), "ghub-gui");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

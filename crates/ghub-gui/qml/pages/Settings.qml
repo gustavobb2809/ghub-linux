@@ -129,7 +129,11 @@ Item {
                     visible: page.backend.autostartKnown
                     text: "Iniciar com o sistema"
                     checked: page.backend.autostartEnabled
-                    onToggled: page.backend.setAutostart(checked)
+                    onToggled: {
+                        page.backend.setAutostart(checked)
+                        // o clique quebra o binding; reafirma para seguir o backend (falha => volta)
+                        checked = Qt.binding(() => page.backend.autostartEnabled)
+                    }
                     contentItem: Text {
                         leftPadding: parent.indicator.width + 10
                         verticalAlignment: Text.AlignVCenter

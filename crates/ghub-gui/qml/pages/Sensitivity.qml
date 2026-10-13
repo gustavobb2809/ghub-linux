@@ -93,8 +93,13 @@ Item {
                                 }
                                 onEditingFinished: {
                                     const v = parseInt(text)
+                                    const pure = /^[0-9]+$/.test(text.trim())
                                     // o usuario sobrescreveu `text`: restaura o binding
                                     text = Qt.binding(() => String(row.dpi))
+                                    if (!pure || v > 2147483647) {
+                                        page.fail(row.index, page.backend.validateDpi(0))
+                                        return
+                                    }
                                     if (!isNaN(v) && v === row.dpi) { page.fail(row.index, ""); return }
                                     const err = isNaN(v) ? page.backend.validateDpi(0)
                                                          : page.backend.setDpiLevel(row.index, v)

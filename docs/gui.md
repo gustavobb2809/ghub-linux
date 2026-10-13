@@ -7,7 +7,7 @@
 O crate `crates/ghub-gui` tem quatro peças:
 
 - `src/model/`: lógica pura e testável sem Qt (estado da GUI, `Props` exibidas, validação de DPI contra `dpi_min`/`dpi_max`/`dpi_step`/`dpi_list`, formatação, nomes de perfil, debounce de edição).
-- `src/client/`: acesso ao daemon atrás do trait `DaemonApi`. `real.rs` usa o D-Bus de sessão (e `systemctl --user` para iniciar o serviço), `fake.rs` é um daemon em memória com cenários (feature `fake-daemon`), `controller.rs` roda numa thread própria, aplica comandos e eventos e publica as `Props`, e `single_instance.rs` garante uma só janela (nome `org.ghublinux.Gui` no barramento; a segunda abertura traz a janela existente).
+- `src/client/`: acesso ao daemon atrás do trait `DaemonApi`. `real.rs` usa o D-Bus de sessão (e `StartServiceByName` para iniciar o serviço), `fake.rs` é um daemon em memória com cenários (feature `fake-daemon`), `controller.rs` roda numa thread própria, aplica comandos e eventos e publica as `Props`, e `single_instance.rs` garante uma só janela (nome `org.ghublinux.Gui` no barramento; a segunda abertura traz a janela existente).
 - `src/backend.rs`: o objeto `Backend` exposto ao QML (módulo `org.ghublinux.gui`); propriedades em camelCase (`daemon_state` vira `daemonState`) e invocáveis como `commitDpi`.
 - `qml/`: `AppWindow.qml`, o singleton `Theme.qml` (paleta gruvbox), `pages/` (`Overview`, `Sensitivity`, `Settings`, `Disconnected`), `components/` e `Smoke.qml` (cenários de teste headless).
 
@@ -44,7 +44,7 @@ Cenários de `--fake`: `running` (padrão, mouse conectado), `stopped` (daemon p
 
 ## Smoke headless
 
-`--smoke <nome>` carrega `Smoke.qml`, verifica a condição do cenário e sai com 0 (ok) ou 7 (falha); não usa a instância única nem o barramento. Em CI/terminal:
+`--smoke <nome>` (exige `--fake`, exceto `theme`, `fail` e `load-failure`; sem `--fake` sai com 2) carrega `Smoke.qml`, verifica a condição do cenário e sai com 0 (ok) ou 7 (falha); não usa a instância única nem o barramento. Em CI/terminal:
 
 ```bash
 QT_QPA_PLATFORM=offscreen QT_LOGGING_TO_CONSOLE=1 \

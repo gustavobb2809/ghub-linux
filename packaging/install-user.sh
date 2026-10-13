@@ -94,5 +94,5 @@ echo "Instalado. Para iniciar agora:        systemctl --user start ghubd"
 echo "Para iniciar com a sessão (opcional): systemctl --user enable ghubd"
 echo "(ou use \"Iniciar com o sistema\" no menu da bandeja)"
 if [ "$GUI" = 1 ]; then
-    echo "Para abrir a interface: \"Abrir ghub\" no menu de aplicativos, ou ghub-gui"
+    echo "Para abrir a interface: \"ghub\" no menu de aplicativos, ou ghub-gui"
 fi
