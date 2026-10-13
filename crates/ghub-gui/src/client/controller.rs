@@ -105,7 +105,13 @@ impl Controller {
             let over = crate::model::dpi::Levels { levels: levels.clone(), active: *active };
             v.device = v.device.take().map(|d| d.with_levels(over));
         }
-        self.selected = v.device.as_ref().map(|d| d.id.clone());
+        // Mantém a seleção durante daemon parado / erro de leitura transitório; só limpa
+        // quando o daemon responde e o dispositivo realmente não existe mais.
+        match &v.device {
+            Some(d) => self.selected = Some(d.id.clone()),
+            None if v.status == DaemonStatus::Running && v.read_error.is_none() => self.selected = None,
+            None => {}
+        }
         if let Some(e) = v.read_error.clone() { (self.sink)(Update::Error(e)); }
         self.last = v.clone();
         (self.sink)(Update::State(v));
@@ -116,9 +122,19 @@ impl Controller {
     fn report(&self, r: Result<(), ApiError>) { if let Err(e) = r { self.fail(e.to_string()); } }
     /// O último estado visto era "daemon parado": escritas viram erro na hora, sem tocar na API.
     fn is_stopped(&self) -> bool { self.last.status == DaemonStatus::Stopped }
+    /// Confirma de verdade que o daemon está fora: se o último estado era Stopped, relê antes
+    /// de decidir (o sinal de volta do daemon pode ainda estar na janela de coalescência).
+    fn daemon_down(&mut self) -> bool {
+        if !self.is_stopped() { return false; }
+        self.refresh();
+        self.is_stopped()
+    }
 
     fn write_levels(&mut self, (levels, active): (Vec<u32>, u32)) {
-        if self.is_stopped() { self.fail(ApiError::Unavailable.to_string()); return; }
+        if self.daemon_down() {
+            self.fail(format!("A edição de DPI não foi aplicada: {}", ApiError::Unavailable));
+            return;
+        }
         match self.device_id() {
             Some(id) => { let r = self.api.set_dpi_levels(&id, levels, active); self.report(r); }
             None => self.fail("Nenhum dispositivo selecionado."),
@@ -132,11 +148,12 @@ impl Controller {
         }
         let needs_daemon = !matches!(cmd,
             Command::SelectDevice(_) | Command::SetAutostart(_) | Command::StartDaemon | Command::Refresh);
-        if needs_daemon && self.is_stopped() {
-            // Falha imediata (nada de esperar o daemon); a releitura abaixo detecta a volta dele.
-            self.pending.flush();
+        if needs_daemon && self.daemon_down() {
+            // Daemon realmente fora (a releitura acima confirmou): falha imediata, sem tocar na API.
+            if self.pending.flush().is_some() {
+                self.fail(format!("A edição de DPI não foi aplicada: {}", ApiError::Unavailable));
+            }
             self.fail(ApiError::Unavailable.to_string());
-            self.refresh();
             return;
         }
         // Mantém a ordem: a edição pendente do slider vai antes de qualquer outro comando.
@@ -463,8 +480,8 @@ mod tests {
     }
 
     #[test]
-    fn stale_stopped_state_is_rechecked_by_the_next_command() {
-        // O sinal de volta do daemon se perdeu: o próprio comando falho dispara a releitura.
+    fn command_after_daemon_returned_succeeds_without_waiting_for_the_signal() {
+        // O sinal OwnerChanged(true) ainda não chegou: o comando relê antes de falhar e então funciona.
         let d = Arc::new(FakeDaemon::new());
         let (tx, urx, h) = rig(d.clone());
         next_state(&urx);
@@ -472,11 +489,66 @@ mod tests {
         cmd(&tx, Command::Refresh);
         assert_eq!(next_state(&urx).status, DaemonStatus::Stopped);
         d.inner.lock().unwrap().running = true;
-        cmd(&tx, Command::SetPolling(500)); // falha rápida, mas a releitura vê Running
-        assert!(next_error(&urx).contains("não está rodando"));
-        assert_eq!(next_state(&urx).status, DaemonStatus::Running);
         cmd(&tx, Command::SetPolling(500));
-        assert_eq!(next_state(&urx).device.unwrap().polling_hz, 500);
+        let all = drain(&urx, Duration::from_millis(150));
+        assert!(!all.iter().any(|u| matches!(u, Update::Error(_))), "{all:?}");
+        let last = all.into_iter().rev().find_map(|u| if let Update::State(s) = u { Some(s) } else { None }).unwrap();
+        assert_eq!(last.device.unwrap().polling_hz, 500);
+        assert_eq!(count(&d, "set_polling_rate"), 1);
+        finish(tx, h);
+    }
+
+    #[test]
+    fn pending_edit_survives_a_stale_stopped_state_when_the_daemon_is_back() {
+        let d = Arc::new(FakeDaemon::new());
+        let (tx, urx, h) = rig_slow_debounce(d.clone());
+        next_state(&urx);
+        d.inner.lock().unwrap().running = false;
+        cmd(&tx, Command::Refresh);
+        assert_eq!(next_state(&urx).status, DaemonStatus::Stopped);
+        d.inner.lock().unwrap().running = true;
+        cmd(&tx, Command::SetDpiLevels { levels: vec![900, 1200, 1600], active: 1 });
+        cmd(&tx, Command::SetPolling(500));
+        let all = drain(&urx, Duration::from_millis(150));
+        assert!(!all.iter().any(|u| matches!(u, Update::Error(_))), "{all:?}");
+        let calls = d.calls();
+        let w = calls.iter().position(|c| c.starts_with("set_dpi_levels")).expect("edição perdida");
+        assert!(w < calls.iter().position(|c| c.starts_with("set_polling_rate")).unwrap());
+        finish(tx, h);
+    }
+
+    #[test]
+    fn dropped_pending_edit_is_reported_when_the_daemon_is_truly_down() {
+        let d = Arc::new(FakeDaemon::new());
+        let (tx, urx, h) = rig_slow_debounce(d.clone());
+        next_state(&urx);
+        d.inner.lock().unwrap().running = false;
+        tx.send(Msg::Event(Event::OwnerChanged(false))).unwrap();
+        assert_eq!(next_state(&urx).status, DaemonStatus::Stopped);
+        cmd(&tx, Command::SetDpiLevels { levels: vec![900, 1200, 1600], active: 1 });
+        cmd(&tx, Command::SetPolling(500));
+        let e1 = next_error(&urx);
+        assert!(e1.contains("edição"), "{e1}");
+        assert!(next_error(&urx).contains("não está rodando"));
+        assert_eq!(count(&d, "set_dpi_levels"), 0);
+        assert_eq!(count(&d, "set_polling_rate"), 0);
+        finish(tx, h);
+    }
+
+    #[test]
+    fn selection_is_kept_across_a_stopped_daemon() {
+        let d = Arc::new(FakeDaemon::new());
+        d.inner.lock().unwrap().devices.push(second_device());
+        let (tx, urx, h) = rig(d.clone());
+        next_state(&urx);
+        cmd(&tx, Command::SelectDevice("dev-2".into()));
+        assert_eq!(next_state(&urx).device.unwrap().id, "dev-2");
+        d.inner.lock().unwrap().running = false;
+        cmd(&tx, Command::Refresh);
+        assert_eq!(next_state(&urx).status, DaemonStatus::Stopped);
+        d.inner.lock().unwrap().running = true;
+        cmd(&tx, Command::Refresh);
+        assert_eq!(next_state(&urx).device.unwrap().id, "dev-2");
         finish(tx, h);
     }
 
