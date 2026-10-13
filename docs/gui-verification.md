@@ -25,6 +25,16 @@ Checklist para rodar com o `ghubd` real e o mouse. O smoke automatizado (`docs/g
 - [ ] Slider arrastado rápido: o valor acompanha o arrasto, mas só **grava ao soltar** (`commitDpi`); sem enxurrada de escritas durante o arrasto.
 - [ ] Trocar o DPI pelo botão do mouse: aparece o banner de que o DPI difere do perfil; "Aplicar perfil" reaplica o do perfil e o banner some.
 
+## Iluminação
+
+- [ ] A aba Iluminação bate com o mock (prévia do mouse com o logo aceso, efeitos, cor, velocidade/intensidade, Aplicar). Em 900×600 nada fica cortado.
+- [ ] Aplicar fica desabilitado enquanto nada mudou; ao mudar o efeito ele habilita.
+- [ ] **Fixo** (ex.: vermelho) → Aplicar: o LED do mouse muda na hora, sem reconectar.
+- [ ] **Ciclo de cores** e **Respiração** mudam o LED como esperado; **Desligado** apaga.
+- [ ] Mouse dormindo: a aba fica desabilitada; um erro de gravação mostra a mensagem e sai de "Gravando no mouse…".
+- [ ] A cópia de segurança aparece em `~/.local/share/ghub-linux/onboard-backup/` só na primeira gravação de cada sessão do daemon.
+- [ ] **Ao final, restaurar o ciclo de cores original**: Ciclo de cores, período 8000 ms, intensidade 0 (ou `ghubctl led set cycle --period 8000 --yes` com o `ghubd` parado).
+
 ## Perfis e sistema
 
 - [ ] Criar um perfil; criar outro com o mesmo nome (sem distinção de maiúsculas) é recusado.

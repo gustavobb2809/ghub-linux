@@ -44,7 +44,7 @@ Com a feature `fake-daemon`, a GUI usa um daemon em memória em vez do D-Bus:
 cargo run -p ghub-gui --features fake-daemon -- --fake running
 ```
 
-Cenários de `--fake`: `running` (padrão, mouse conectado), `stopped` (daemon parado) e `sleeping` (mouse dormindo: "lendo…", controles desabilitados). Sem a feature, `--fake` sai com código 2.
+Cenários de `--fake`: `running` (padrão, mouse conectado), `stopped` (daemon parado), `sleeping` (mouse dormindo: "lendo…", controles desabilitados) e `no-led` (mouse sem suporte a LED: a aba Iluminação some). Sem a feature, `--fake` sai com código 2.
 
 ## Smoke headless
 
@@ -55,7 +55,7 @@ QT_QPA_PLATFORM=offscreen QT_LOGGING_TO_CONSOLE=1 \
   cargo run -p ghub-gui --features fake-daemon -- --smoke pages --fake running; echo $?
 ```
 
-`QT_LOGGING_TO_CONSOLE=1` mostra os erros de QML. Nomes: `theme`, `running`, `stopped`, `sleeping`, `pages`, `disconnected`, `dimmed`, `nav`, `rebind`, `release`, `edit` e `load-failure` (aponta para um QML inexistente e deve sair com 1: uma falha ao carregar o QML encerra o processo em vez de ficar parado). A suíte `crates/ghub-gui/tests/smoke.rs` roda cada cenário e uma contraprova (cenário errado deve falhar com 7).
+`QT_LOGGING_TO_CONSOLE=1` mostra os erros de QML. Nomes: `theme`, `running`, `stopped`, `sleeping`, `pages`, `disconnected`, `dimmed`, `nav`, `rebind`, `release`, `edit`, `lighting` (aba Iluminação reflete o LED e Aplicar grava), `lighting-hidden` (sem suporte a LED a aba some) e `load-failure` (aponta para um QML inexistente e deve sair com 1: uma falha ao carregar o QML encerra o processo em vez de ficar parado). A suíte `crates/ghub-gui/tests/smoke.rs` roda cada cenário e uma contraprova (cenário errado deve falhar com 7).
 
 ## Testes
 
