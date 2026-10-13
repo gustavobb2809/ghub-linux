@@ -105,9 +105,16 @@ QtObject {
             if (!w.pagesVisible) return false
             const r = w.layoutReport()
             if (r.sidebar !== 236 || r.top !== 64 || r.tabs < 40 || r.main !== 900 - 236) return false
+            // marca da barra lateral: emblema de 30 px + palavra, cabendo na barra
+            if (r.logoH !== 30 || r.logoW < 90 || r.logoW > 236 - 14 - 15 - 8) return false
             w.goTo(1)
             return w.sensitivityMinTrack() >= 100 && w.sensitivityUsable()
         }
+        case "logo":
+            return root.win.pagesVisible && root.win.layoutReport().logoH === 30
+        case "logo-wrong-size":
+            // contraprova: a mesma checagem com altura errada tem de falhar
+            return root.win.pagesVisible && root.win.layoutReport().logoH === 31
         case "visible":
             return root.win.visible === true
         case "hidden":

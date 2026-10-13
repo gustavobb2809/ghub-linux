@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- glifo de cor única: anel + mouse com roda e divisória vazadas -->
+  <path fill="#ebdbb2" fill-rule="evenodd" d="M64 4a60 60 0 1 0 0 120A60 60 0 0 0 64 4zm0 12a48 48 0 1 1 0 96 48 48 0 0 1 0-96zM42 46v36a22 22 0 0 0 44 0V46a22 22 0 0 0-44 0zm18-9a4 4 0 0 1 8 0v12a4 4 0 0 1-8 0zM42 65h44v4H42z"/>
+</svg>

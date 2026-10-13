@@ -126,6 +126,14 @@ fn layout_marker(epoch: u32) -> MenuItem<GhubTray> {
         .into()
 }
 
+/// Rótulo do submenu de DPI com o valor atual ("DPI: 1200"), como o "DPI … ativo" do mock.
+fn dpi_label(labels: &[String], selected: usize) -> String {
+    match labels.get(selected) {
+        Some(l) => format!("DPI: {}", escape(l.strip_suffix(" DPI").unwrap_or(l))),
+        None => "DPI".into(),
+    }
+}
+
 fn radio_options(labels: &[String]) -> Vec<RadioItem> {
     labels
         .iter()
@@ -145,7 +153,7 @@ fn menu_item(entry: &Entry, actions: &Sender<Request>, timeout: Duration) -> Men
         Entry::Dpi { labels, selected, enabled } => {
             let tx = actions.clone();
             SubMenu {
-                label: "DPI".into(),
+                label: dpi_label(labels, *selected),
                 enabled: *enabled,
                 submenu: vec![RadioGroup {
                     selected: *selected,
@@ -301,14 +309,14 @@ mod tests {
 
     fn full_view() -> TrayView {
         view(vec![
-            Entry::Info("G703 — 91 %".into()),
+            Entry::Info("G703".into()),
+            Entry::Info("91 % · conectado · perfil Padrão".into()),
             Entry::Separator,
             Entry::Dpi {
                 labels: vec!["800 DPI".into(), "1200 DPI".into()],
                 selected: 1,
                 enabled: true,
             },
-            Entry::Separator,
             Entry::Profiles {
                 labels: vec!["Padrão".into(), "Trabalho".into()],
                 selected: 0,
@@ -359,15 +367,23 @@ mod tests {
         assert_eq!(marker_children(&t), 0);
         match &menu[0] {
             MenuItem::Standard(i) => {
-                assert_eq!(i.label, "G703 — 91 %");
+                assert_eq!(i.label, "G703");
                 assert!(!i.enabled);
             }
             _ => panic!("esperava item informativo"),
         }
-        assert!(matches!(menu[1], MenuItem::Separator));
-        match &menu[2] {
+        match &menu[1] {
+            MenuItem::Standard(i) => {
+                assert_eq!(i.label, "91 % · conectado · perfil Padrão");
+                assert!(!i.enabled);
+            }
+            _ => panic!("esperava item informativo"),
+        }
+        assert!(matches!(menu[5], MenuItem::Separator));
+        assert!(matches!(menu[2], MenuItem::Separator));
+        match &menu[3] {
             MenuItem::SubMenu(s) => {
-                assert_eq!(s.label, "DPI");
+                assert_eq!(s.label, "DPI: 1200");
                 assert!(s.enabled);
                 match &s.submenu[0] {
                     MenuItem::RadioGroup(g) => {
@@ -427,7 +443,7 @@ mod tests {
         let (mut t, rx) = tray(full_view());
         let menu = t.menu();
 
-        if let MenuItem::SubMenu(s) = &menu[2] {
+        if let MenuItem::SubMenu(s) = &menu[3] {
             if let MenuItem::RadioGroup(g) = &s.submenu[0] {
                 (g.select)(&mut t, 0);
             }
@@ -476,7 +492,7 @@ mod tests {
         }
         match &menu[1] {
             MenuItem::SubMenu(s) => {
-                assert_eq!(s.label, "DPI");
+                assert_eq!(s.label, "DPI: 800__DPI");
                 match &s.submenu[0] {
                     MenuItem::RadioGroup(g) => assert_eq!(g.options[0].label, "800__DPI"),
                     _ => panic!("esperava grupo de rádio"),
@@ -609,13 +625,13 @@ mod tests {
     fn real_refresh_overrides_the_optimistic_state() {
         let original = full_view();
         let (mut t, _rx) = tray(original.clone());
-        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 3, 0);
         select_radio(&mut t, 4, 1);
         activate_checkmark(&mut t, 6);
         assert_ne!(t.view, original);
         t.set_view(original.clone());
         let menu = t.menu();
-        assert_eq!(radio_selected(&menu[2]), 1);
+        assert_eq!(radio_selected(&menu[3]), 1);
         assert_eq!(radio_selected(&menu[4]), 0);
         match &menu[6] {
             MenuItem::Checkmark(c) => assert!(c.checked),
@@ -644,15 +660,14 @@ mod tests {
 
     fn settled_view() -> TrayView {
         let mut v = view(vec![
-            Entry::Info("G703 — 42 %".into()),
-            Entry::Info("1600 DPI · 1000 Hz".into()),
+            Entry::Info("G703".into()),
+            Entry::Info("42 % · conectado · perfil Trabalho".into()),
             Entry::Separator,
             Entry::Dpi {
                 labels: vec!["800 DPI".into(), "1200 DPI".into()],
                 selected: 0,
                 enabled: true,
             },
-            Entry::Separator,
             Entry::Profiles {
                 labels: vec!["Padrão".into(), "Trabalho".into()],
                 selected: 1,
@@ -676,10 +691,10 @@ mod tests {
     fn assert_shows_settled_view(t: &GhubTray) {
         assert_eq!(t.tool_tip().description, "vista real");
         let menu = t.menu();
-        assert_eq!(info_label(&menu[0]), "G703 — 42 %");
-        assert_eq!(info_label(&menu[1]), "1600 DPI · 1000 Hz");
+        assert_eq!(info_label(&menu[0]), "G703");
+        assert_eq!(info_label(&menu[1]), "42 % · conectado · perfil Trabalho");
         assert_eq!(radio_selected(&menu[3]), 0);
-        assert_eq!(radio_selected(&menu[5]), 1);
+        assert_eq!(radio_selected(&menu[4]), 1);
     }
 
     fn answering_tray() -> (GhubTray, thread::JoinHandle<Vec<(Action, bool)>>) {
@@ -691,7 +706,7 @@ mod tests {
     #[test]
     fn dpi_click_shows_the_replied_view() {
         let (mut t, actions) = answering_tray();
-        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 3, 0);
         assert_shows_settled_view(&t);
         drop(t);
         assert_eq!(actions.join().unwrap(), vec![(Action::SetDpiLevel(0), true)]);
@@ -714,7 +729,7 @@ mod tests {
         let (mut t, actions) = answering_tray();
         activate_checkmark(&mut t, 6);
         assert_shows_settled_view(&t);
-        match &t.menu()[7] {
+        match &t.menu()[6] {
             MenuItem::Checkmark(c) => assert!(!c.checked),
             _ => panic!("esperava item marcável"),
         }
@@ -727,14 +742,14 @@ mod tests {
         let (tx, rx) = channel();
         let mut t = GhubTray::new(full_view(), tx).with_settle_timeout(Duration::from_millis(30));
         let start = Instant::now();
-        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 3, 0);
         assert!(start.elapsed() < Duration::from_millis(500));
         let req = rx.try_recv().unwrap();
         assert_eq!(req.action, Action::SetDpiLevel(0));
         assert!(req.reply.is_some());
         let menu = t.menu();
-        assert_eq!(radio_selected(&menu[2]), 0);
-        assert_eq!(info_label(&menu[0]), "G703 — 91 %");
+        assert_eq!(radio_selected(&menu[3]), 0);
+        assert_eq!(info_label(&menu[0]), "G703");
         assert_eq!(t.tool_tip().description, "91 %");
     }
 
@@ -745,12 +760,12 @@ mod tests {
         // Prazo longo: se esperasse por ele, o teste demoraria 10 s.
         let mut t = GhubTray::new(full_view(), tx).with_settle_timeout(Duration::from_secs(10));
         let start = Instant::now();
-        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 3, 0);
         select_radio(&mut t, 4, 1);
         activate_checkmark(&mut t, 6);
         assert!(start.elapsed() < Duration::from_millis(500));
         let menu = t.menu();
-        assert_eq!(radio_selected(&menu[2]), 0);
+        assert_eq!(radio_selected(&menu[3]), 0);
         assert_eq!(radio_selected(&menu[4]), 1);
         match &menu[6] {
             MenuItem::Checkmark(c) => assert!(!c.checked),
@@ -855,7 +870,7 @@ mod tests {
         activate_checkmark(&mut t, 6);
         assert_eq!(rx.try_recv().unwrap().action, Action::ToggleAutostart);
         assert_eq!(marker_children(&t), 1);
-        select_radio(&mut t, 2, 0);
+        select_radio(&mut t, 3, 0);
         assert_eq!(rx.try_recv().unwrap().action, Action::SetDpiLevel(0));
         assert_eq!(marker_children(&t), 0);
     }
