@@ -173,8 +173,39 @@ const NOT_INSTALLED: &str = "a interface gráfica (ghub-gui) ainda não está in
 
 /// Argumentos do `systemd-run`: a GUI roda num escopo transitório próprio, fora do cgroup do
 /// daemon (herda o ambiente gráfico da sessão e sobrevive a um restart do `ghubd`).
-pub(crate) fn scope_args(program: &str) -> [&str; 5] {
-    ["--user", "--scope", "--collect", "--quiet", program]
+pub(crate) fn scope_args(program: &str, setenv: &[String]) -> Vec<String> {
+    let mut args: Vec<String> = ["--user", "--scope", "--collect", "--quiet"].map(String::from).into();
+    args.extend(setenv.iter().map(|kv| format!("--setenv={kv}")));
+    args.push(program.to_string());
+    args
+}
+
+/// Variáveis do ambiente gráfico que o escopo precisa. O `systemd-run --scope` herda o ambiente
+/// de quem chama, e o daemon sobe no boot, antes de o compositor exportar `DISPLAY` e
+/// `WAYLAND_DISPLAY` para o gerenciador de usuário: sem elas o Qt aborta ("could not connect to display").
+const GRAPHICAL_VARS: [&str; 6] =
+    ["DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "XDG_SESSION_DESKTOP"];
+
+/// Pares `CHAVE=valor` gráficos presentes na saída de `systemctl --user show-environment` e
+/// ausentes do ambiente atual (`have`). Valores com aspas do shell (`$'..'`) são ignorados.
+pub(crate) fn missing_graphical_env(show_environment: &str, have: impl Fn(&str) -> bool) -> Vec<String> {
+    show_environment
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, v)| GRAPHICAL_VARS.contains(k) && !v.is_empty() && !v.starts_with('$') && !have(k))
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect()
+}
+
+/// Ambiente gráfico do gerenciador de usuário que falta ao daemon (vazio se não der para ler).
+fn session_graphical_env() -> Vec<String> {
+    let out = Process::new("systemctl").args(["--user", "show-environment"]).output();
+    match out {
+        Ok(o) if o.status.success() => {
+            missing_graphical_env(&String::from_utf8_lossy(&o.stdout), |k| std::env::var_os(k).is_some())
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Programa da GUI: o irmão `ghub-gui` do executável atual, se existir (caminho absoluto, pois o
@@ -209,7 +240,7 @@ enum Watch {
 
 /// Inicia `program`, acompanha-o por `window` e diz se ele falhou cedo. Saída com sucesso ou
 /// ainda rodando ao fim da janela é `Ok`; nesse caso uma thread recolhe o filho depois.
-fn spawn_and_watch(program: &str, args: &[&str], window: Duration) -> Result<(), Watch> {
+fn spawn_and_watch<S: AsRef<std::ffi::OsStr>>(program: &str, args: &[S], window: Duration) -> Result<(), Watch> {
     use std::io::Read;
     use std::process::Stdio;
     use std::sync::{Arc, Mutex};
@@ -268,8 +299,8 @@ fn spawn_and_watch(program: &str, args: &[&str], window: Duration) -> Result<(),
 }
 
 /// Lança `program` direto, com texto legível para o `NotFound`.
-fn launch_direct(program: &str, args: &[&str], window: Duration) -> Result<(), String> {
-    spawn_and_watch(program, args, window).map_err(|w| match w {
+fn launch_direct(program: &str, window: Duration) -> Result<(), String> {
+    spawn_and_watch::<&str>(program, &[], window).map_err(|w| match w {
         Watch::NotFound => NOT_INSTALLED.to_string(),
         Watch::Failed(t) => t,
     })
@@ -283,8 +314,9 @@ impl Launcher for GuiLauncher {
     fn open_gui(&self) -> Result<(), String> {
         let exe = std::env::current_exe().ok();
         let program = gui_program(exe.as_deref());
-        match spawn_and_watch("systemd-run", &scope_args(&program), LAUNCH_WINDOW) {
-            Err(Watch::NotFound) => launch_direct(&program, &[], LAUNCH_WINDOW),
+        let args = scope_args(&program, &session_graphical_env());
+        match spawn_and_watch("systemd-run", &args, LAUNCH_WINDOW) {
+            Err(Watch::NotFound) => launch_direct(&program, LAUNCH_WINDOW),
             Err(Watch::Failed(t)) => Err(t),
             Ok(()) => Ok(()),
         }
@@ -301,7 +333,23 @@ mod tests {
 
     #[test]
     fn scope_command_runs_the_gui_in_its_own_scope() {
-        assert_eq!(scope_args("/x/ghub-gui"), ["--user", "--scope", "--collect", "--quiet", "/x/ghub-gui"]);
+        assert_eq!(scope_args("/x/ghub-gui", &[]), ["--user", "--scope", "--collect", "--quiet", "/x/ghub-gui"]);
+    }
+
+    #[test]
+    fn scope_command_forwards_the_graphical_environment() {
+        let args = scope_args("/x/ghub-gui", &["DISPLAY=:1".into(), "WAYLAND_DISPLAY=wayland-1".into()]);
+        assert_eq!(
+            args,
+            ["--user", "--scope", "--collect", "--quiet", "--setenv=DISPLAY=:1", "--setenv=WAYLAND_DISPLAY=wayland-1", "/x/ghub-gui"]
+        );
+    }
+
+    #[test]
+    fn missing_graphical_env_takes_only_absent_plain_graphical_vars() {
+        let show = "DISPLAY=:1\nWAYLAND_DISPLAY=wayland-1\nPATH=/usr/bin\nQT_QPA_PLATFORM=$'wayland;xcb'\nXDG_SESSION_TYPE=wayland\nXAUTHORITY=\n";
+        let got = missing_graphical_env(show, |k| k == "XDG_SESSION_TYPE");
+        assert_eq!(got, ["DISPLAY=:1", "WAYLAND_DISPLAY=wayland-1"]);
     }
 
     #[test]
@@ -346,7 +394,7 @@ mod tests {
 
     #[test]
     fn early_success_is_ok() {
-        assert_eq!(spawn_and_watch("true", &[], WINDOW), Ok(()));
+        assert_eq!(spawn_and_watch::<&str>("true", &[], WINDOW), Ok(()));
     }
 
     #[test]
@@ -369,9 +417,9 @@ mod tests {
 
     #[test]
     fn missing_program_is_not_found_and_readable() {
-        assert_eq!(spawn_and_watch("ghub-programa-que-nao-existe", &[], WINDOW), Err(Watch::NotFound));
+        assert_eq!(spawn_and_watch::<&str>("ghub-programa-que-nao-existe", &[], WINDOW), Err(Watch::NotFound));
         assert_eq!(
-            launch_direct("ghub-programa-que-nao-existe", &[], WINDOW),
+            launch_direct("ghub-programa-que-nao-existe", WINDOW),
             Err("a interface gráfica (ghub-gui) ainda não está instalada".to_string())
         );
     }
