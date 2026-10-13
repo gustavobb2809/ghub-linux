@@ -3,6 +3,7 @@ name = "ghubd"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 
 [dependencies]
 hidpp = { path = "../hidpp" }
