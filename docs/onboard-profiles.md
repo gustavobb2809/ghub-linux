@@ -17,3 +17,12 @@ Achados do spike de 2026-10-13, lidos do mouse (somente leitura). Backup bruto e
 
 ## Caminho provável para a v1.1 (a validar)
 Gravar o LED do perfil: ler o setor, mudar as entradas de LED, recalcular o CRC e regravar, lendo de volta para conferir. Requer backup (este arquivo) e escrita só após aprovação. Não serve para sincronização contínua com as cores do sistema (gravação na flash).
+
+## Escrita validada no hardware (2026-10-13)
+Trocar as 4 entradas de LED do perfil 1 por `01 ff 00 00 00 00 00 00 00 00 00` (efeito fixo, vermelho) deixou o LED **vermelho fixo**. Procedimento que funcionou, todos via `0x8100`:
+1. Ler o setor (`fn5`, 16 bytes por chamada, última leitura em offset 239) e comparar com o backup; abortar se diferir.
+2. Alterar as entradas em `d0/db/e6/f1` e recalcular o CRC-16 dos 253 primeiros bytes (bytes 253–254, big-endian).
+3. `fn6 [setor(2), offset(2)=0, tamanho(2)=255]` → `fn7` com 16 bytes por chamada (último bloco completado com `ff`) → `fn8` (fim).
+4. Reler e comparar; em caso de diferença, regravar o backup.
+5. `fn3 [00 01]` (perfil atual) recarrega o perfil e o LED muda na hora, sem reconectar.
+Não foi preciso trocar o modo (continua onboard).
