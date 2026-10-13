@@ -7,7 +7,7 @@ Rectangle {
     signal dismissed()
     visible: text !== ""
     color: Theme.card
-    radius: Theme.radius
+    radius: 10
     border.color: Theme.bad
     border.width: 1
     implicitHeight: msg.implicitHeight + 24
@@ -18,7 +18,7 @@ Rectangle {
         text: toast.text
         color: Theme.fg
         wrapMode: Text.WordWrap
-        font.family: Theme.uiFonts[0]
+        font.family: Theme.ui
         font.pixelSize: 13
     }
     MouseArea { anchors.fill: parent; onClicked: toast.dismissed() }
