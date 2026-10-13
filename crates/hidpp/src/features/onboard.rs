@@ -1,7 +1,11 @@
 //! Perfis onboard (`0x8100`): leitura/gravação do setor do perfil ativo e o LED que ele guarda.
 //! Formato conferido no G703 LS (docs/onboard-profiles.md).
 
+use std::path::{Path, PathBuf};
+
+use crate::device::Device;
 use crate::error::{HidppError, Result};
+use crate::transport::Transport;
 
 pub const ONBOARD_PROFILES: u16 = 0x8100;
 pub const SECTOR_SIZE: usize = 255;
@@ -175,6 +179,144 @@ impl Led {
     }
 }
 
+const FN_RELOAD: u8 = 3;
+const FN_CURRENT: u8 = 4;
+const FN_READ: u8 = 5;
+const FN_WRITE_START: u8 = 6;
+const FN_WRITE: u8 = 7;
+const FN_WRITE_END: u8 = 8;
+
+pub fn read_sector<T: Transport>(dev: &mut Device<T>, sector: u16) -> Result<Sector> {
+    let mut out: Sector = [0; SECTOR_SIZE];
+    let [sh, sl] = sector.to_be_bytes();
+    // 0,16,…,224 cobrem 0..240; a última leitura em 239 cobre o resto (sobrepõe 1 byte).
+    for off in (0u16..240).step_by(16).chain([SECTOR_SIZE as u16 - 16]) {
+        let [oh, ol] = off.to_be_bytes();
+        let r = dev.call(ONBOARD_PROFILES, FN_READ, &[sh, sl, oh, ol])?;
+        let at = usize::from(off);
+        let n = 16.min(SECTOR_SIZE - at);
+        out[at..at + n].copy_from_slice(&r[..n]);
+    }
+    Ok(out)
+}
+
+pub fn write_sector<T: Transport>(dev: &mut Device<T>, sector: u16, bytes: &Sector) -> Result<()> {
+    let [sh, sl] = sector.to_be_bytes();
+    dev.call(ONBOARD_PROFILES, FN_WRITE_START, &[sh, sl, 0, 0, 0, SECTOR_SIZE as u8])?;
+    for chunk in bytes.chunks(16) {
+        let mut block = [0xffu8; 16];
+        block[..chunk.len()].copy_from_slice(chunk);
+        dev.call(ONBOARD_PROFILES, FN_WRITE, &block)?;
+    }
+    dev.call(ONBOARD_PROFILES, FN_WRITE_END, &[])?;
+    Ok(())
+}
+
+/// Perfil onboard em uso: número (1 a N), setor onde mora e seu conteúdo (CRC já conferido).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveProfile {
+    pub number: u8,
+    pub sector: u16,
+    pub bytes: Sector,
+}
+
+impl ActiveProfile {
+    fn entry(&self, i: usize) -> [u8; LED_LEN] {
+        let o = LED_OFFSETS[i];
+        self.bytes[o..o + LED_LEN].try_into().expect("11 bytes")
+    }
+
+    /// O LED da primeira entrada (as quatro são mantidas iguais).
+    pub fn led(&self) -> Result<Led> {
+        Led::parse(&self.entry(0))
+    }
+
+    /// Cópia com `led` nas quatro entradas e o CRC refeito; o resto dos bytes não muda.
+    pub fn with_led(&self, led: &Led) -> ActiveProfile {
+        let mut n = self.clone();
+        for o in LED_OFFSETS {
+            n.bytes[o..o + LED_LEN].copy_from_slice(&led.encode());
+        }
+        seal(&mut n.bytes);
+        n
+    }
+}
+
+/// Lê o perfil ativo: `fn4` dá o número (1-based; confirmado só para o perfil 1) e o diretório
+/// (setor 0, entradas de 4 bytes `[setor(2), habilitado, 0]`) diz onde ele mora.
+pub fn read_active_profile<T: Transport>(dev: &mut Device<T>) -> Result<ActiveProfile> {
+    let number = dev.call(ONBOARD_PROFILES, FN_CURRENT, &[])?[1];
+    if number == 0 {
+        return Err(HidppError::UnexpectedResponse("no active onboard profile"));
+    }
+    let dir = read_sector(dev, 0)?;
+    if !verify(&dir) {
+        return Err(HidppError::BadChecksum);
+    }
+    let at = (usize::from(number) - 1) * 4;
+    if at + 2 > CRC_AT {
+        return Err(HidppError::UnexpectedResponse("onboard profile outside the directory"));
+    }
+    let sector = u16::from_be_bytes([dir[at], dir[at + 1]]);
+    if sector == 0xffff {
+        return Err(HidppError::UnexpectedResponse("onboard profile not in the directory"));
+    }
+    let bytes = read_sector(dev, sector)?;
+    if !verify(&bytes) {
+        return Err(HidppError::BadChecksum);
+    }
+    Ok(ActiveProfile { number, sector, bytes })
+}
+
+pub fn read_led<T: Transport>(dev: &mut Device<T>) -> Result<Led> {
+    read_active_profile(dev)?.led()
+}
+
+/// Grava `led` no perfil ativo. Ordem: ler (CRC válido) → `backup` (erro aborta) → gravar →
+/// reler e comparar (se diferir, regrava o original e devolve `VerifyFailed`) → recarregar.
+/// Se o LED já é o pedido, não faz nada.
+pub fn set_led<T: Transport>(
+    dev: &mut Device<T>,
+    led: &Led,
+    backup: impl FnOnce(&ActiveProfile) -> std::io::Result<()>,
+) -> Result<()> {
+    let original = read_active_profile(dev)?;
+    let new = original.with_led(led);
+    if new.bytes == original.bytes {
+        return Ok(());
+    }
+    backup(&original)?;
+    write_sector(dev, new.sector, &new.bytes)?;
+    if read_sector(dev, new.sector)? != new.bytes {
+        write_sector(dev, original.sector, &original.bytes)?;
+        return Err(HidppError::VerifyFailed);
+    }
+    dev.call(ONBOARD_PROFILES, FN_RELOAD, &[0, new.number])?;
+    Ok(())
+}
+
+/// `$XDG_DATA_HOME/ghub-linux/onboard-backup` (padrão `~/.local/share/...`).
+pub fn default_backup_dir() -> PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("ghub-linux/onboard-backup")
+}
+
+/// Salva o setor bruto em `dir/<tag>-sector<hhhh>-<unix>.bin`.
+pub fn save_backup(dir: &Path, tag: &str, p: &ActiveProfile) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(dir)?;
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = dir.join(format!("{tag}-sector{:04x}-{secs}.bin", p.sector));
+    std::fs::write(&path, p.bytes)?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,5 +414,117 @@ mod tests {
             assert_eq!(Led::from_parts(e, &c, u32::from(p), u32::from(i)), Ok(led));
         }
         assert_eq!(Led::Fixed { rgb: [0xfe, 0x80, 0x19] }.parts().1, "#FE8019");
+    }
+
+    use super::super::onboard_fake::{sample_profile_sector, MemOnboard};
+    use crate::device::Device;
+    use std::collections::HashMap;
+
+    const FI: u8 = 8;
+    const CYCLE: Led = Led::Cycle { period_ms: 8000, intensity: 0 };
+    const RED: Led = Led::Fixed { rgb: [0xff, 0, 0] };
+
+    fn dev(mem: MemOnboard) -> Device<MemOnboard> {
+        Device::with_features(mem, 1, HashMap::from([(ONBOARD_PROFILES, FI)]))
+    }
+
+    #[test]
+    fn reads_the_active_profile_through_the_directory() {
+        let mut d = dev(MemOnboard::new(FI, &CYCLE));
+        let p = read_active_profile(&mut d).unwrap();
+        assert_eq!((p.number, p.sector), (1, 1));
+        assert_eq!(p.led(), Ok(CYCLE));
+        assert_eq!(read_led(&mut d), Ok(CYCLE));
+    }
+
+    #[test]
+    fn with_led_changes_only_the_led_entries_and_the_crc() {
+        let base = ActiveProfile { number: 1, sector: 1, bytes: sample_profile_sector(&CYCLE) };
+        let new = base.with_led(&RED);
+        assert!(verify(&new.bytes));
+        for i in 0..SECTOR_SIZE - 2 {
+            let in_led = LED_OFFSETS.iter().any(|o| (*o..*o + LED_LEN).contains(&i));
+            if !in_led {
+                assert_eq!(new.bytes[i], base.bytes[i], "byte {i:#x} mudou");
+            }
+        }
+        assert_eq!(new.led(), Ok(RED));
+    }
+
+    #[test]
+    fn set_led_backs_up_writes_verifies_and_reloads() {
+        let mut d = dev(MemOnboard::new(FI, &CYCLE));
+        let mut saved = vec![];
+        set_led(&mut d, &RED, |p| {
+            saved.push(p.clone());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].led(), Ok(CYCLE));
+        let mem = d.into_transport();
+        assert_eq!(mem.commits, vec![1]);
+        assert_eq!(mem.reloads, vec![1]);
+        assert!(verify(&mem.sectors[&1]));
+        assert_eq!(ActiveProfile { number: 1, sector: 1, bytes: mem.sectors[&1] }.led(), Ok(RED));
+    }
+
+    #[test]
+    fn set_led_with_the_same_led_neither_backs_up_nor_writes() {
+        let mut d = dev(MemOnboard::new(FI, &CYCLE));
+        set_led(&mut d, &CYCLE, |_| panic!("não devia salvar backup")).unwrap();
+        let mem = d.into_transport();
+        assert!(mem.commits.is_empty() && mem.reloads.is_empty());
+    }
+
+    #[test]
+    fn refuses_a_sector_with_a_bad_crc_and_writes_nothing() {
+        let mut mem = MemOnboard::new(FI, &CYCLE);
+        mem.sectors.get_mut(&1).unwrap()[20] ^= 0xff;
+        let mut d = dev(mem);
+        assert_eq!(set_led(&mut d, &RED, |_| Ok(())), Err(HidppError::BadChecksum));
+        assert!(d.into_transport().commits.is_empty());
+    }
+
+    #[test]
+    fn a_failed_backup_aborts_before_writing() {
+        let mut d = dev(MemOnboard::new(FI, &CYCLE));
+        let r = set_led(&mut d, &RED, |_| Err(std::io::Error::other("disco cheio")));
+        assert!(matches!(r, Err(HidppError::Io(m)) if m.contains("disco cheio")));
+        assert!(d.into_transport().commits.is_empty());
+    }
+
+    #[test]
+    fn a_verify_mismatch_restores_the_original_sector() {
+        let mut mem = MemOnboard::new(FI, &CYCLE);
+        mem.corrupt_next_commit = true;
+        let original = mem.sectors[&1];
+        let mut d = dev(mem);
+        assert_eq!(set_led(&mut d, &RED, |_| Ok(())), Err(HidppError::VerifyFailed));
+        let mem = d.into_transport();
+        assert_eq!(mem.commits, vec![1, 1], "gravou e regravou o original");
+        assert_eq!(mem.sectors[&1], original);
+        assert!(mem.reloads.is_empty());
+    }
+
+    #[test]
+    fn unsupported_feature_is_reported() {
+        let mut d = Device::with_features(MemOnboard::new(FI, &CYCLE), 1, HashMap::new());
+        assert_eq!(read_led(&mut d), Err(HidppError::FeatureNotSupported(ONBOARD_PROFILES)));
+    }
+
+    #[test]
+    fn save_backup_writes_the_raw_sector() {
+        let dir = std::env::temp_dir().join(format!("ghub-onboard-bk-{}", std::process::id()));
+        let p = ActiveProfile { number: 1, sector: 1, bytes: sample_profile_sector(&CYCLE) };
+        let path = save_backup(&dir, "dev1", &p).unwrap();
+        assert!(path.file_name().unwrap().to_string_lossy().starts_with("dev1-sector0001-"));
+        assert_eq!(std::fs::read(&path).unwrap(), p.bytes.to_vec());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn default_backup_dir_ends_with_the_app_path() {
+        assert!(default_backup_dir().ends_with("ghub-linux/onboard-backup"));
     }
 }
