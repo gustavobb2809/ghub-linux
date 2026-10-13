@@ -11,6 +11,7 @@ pub enum Command {
     SetDpiLevels { levels: Vec<u32>, active: u32 },
     SetActiveLevel(u32),
     SetPolling(u32),
+    SetLed(ghub_ipc::LedSetting),
     ApplyProfile,
     ActivateProfile(String),
     CreateProfile(String),
@@ -26,7 +27,7 @@ pub enum Event { DevicesChanged, DeviceChanged(String), ProfileChanged(String), 
 #[derive(Debug)]
 pub enum Msg { Command(Command), Event(Event), Quit }
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Update { State(ViewState), Error(String) }
+pub enum Update { State(ViewState), Error(String), LedDone }
 
 #[derive(Debug, Clone, Copy)]
 pub struct Config { pub debounce: Duration, pub coalesce: Duration }
@@ -47,7 +48,19 @@ pub fn snapshot(api: &dyn DaemonApi, selected: Option<&str>, autostart: Option<b
         .map(|d| DeviceChoice { id: d.id.clone(), name: d.name.clone() }).collect();
     if let Some(s) = pick_device(&summaries, selected) {
         match api.get_device_state(&s.id) {
-            Ok(st) => v.device = Some(DeviceView::from_state(&st)),
+            Ok(st) => {
+                let mut dv = DeviceView::from_state(&st);
+                if st.connected {
+                    if let Ok(effects) = api.led_effects(&s.id) {
+                        if !effects.is_empty() {
+                            if let Ok(current) = api.get_led(&s.id) {
+                                dv = dv.with_led(Some(LedView { effects, current }));
+                            }
+                        }
+                    }
+                }
+                v.device = Some(dv);
+            }
             Err(e) => v.read_error = Some(e.to_string()),
         }
     }
@@ -162,6 +175,10 @@ impl Controller {
             Command::SetDpiLevels { .. } => unreachable!(),
             Command::SetActiveLevel(i) => self.with_device(|c, id| c.api.set_active_dpi_level(&id, i)),
             Command::SetPolling(hz) => self.with_device(|c, id| c.api.set_polling_rate(&id, hz)),
+            Command::SetLed(s) => {
+                self.with_device(|c, id| c.api.set_led(&id, &s));
+                (self.sink)(Update::LedDone);
+            }
             Command::ApplyProfile => {
                 let level = self.last.device.as_ref().map(|d| d.active_level);
                 match level { Some(l) => self.with_device(|c, id| c.api.set_active_dpi_level(&id, l)),
@@ -216,7 +233,7 @@ mod tests {
         loop {
             match urx.recv_timeout(Duration::from_secs(2)).expect("sem estado em 2 s") {
                 Update::State(s) => return s,
-                Update::Error(_) => {}
+                Update::Error(_) | Update::LedDone => {}
             }
         }
     }
@@ -224,7 +241,7 @@ mod tests {
         loop {
             match urx.recv_timeout(Duration::from_secs(2)).expect("sem erro em 2 s") {
                 Update::Error(e) => return e,
-                Update::State(_) => {}
+                Update::State(_) | Update::LedDone => {}
             }
         }
     }
@@ -251,6 +268,52 @@ mod tests {
     fn cmd(tx: &Sender<Msg>, c: Command) { tx.send(Msg::Command(c)).unwrap(); }
     fn second_device() -> ghub_ipc::DeviceState {
         let mut s = sample_state(); s.id = "dev-2".into(); s.name = "Outro".into(); s
+    }
+
+    #[test]
+    fn snapshot_includes_the_led_when_supported() {
+        let d = FakeDaemon::new();
+        let led = snapshot(&d, None, None).device.unwrap().led.expect("LED suportado no fake");
+        assert_eq!(led.effects, vec!["off", "fixed", "cycle", "breathing"]);
+        assert_eq!(led.current.effect, "cycle");
+    }
+
+    #[test]
+    fn snapshot_has_no_led_when_the_device_reports_none() {
+        let d = FakeDaemon::scenario("no-led");
+        assert!(snapshot(&d, None, None).device.unwrap().led.is_none());
+    }
+
+    fn red() -> ghub_ipc::LedSetting {
+        ghub_ipc::LedSetting { effect: "fixed".into(), color: "#FF0000".into(), period_ms: 0, intensity: 0 }
+    }
+
+    #[test]
+    fn set_led_writes_refreshes_and_signals_done() {
+        let d = Arc::new(FakeDaemon::new());
+        let (tx, urx, h) = rig(d.clone());
+        next_state(&urx);
+        cmd(&tx, Command::SetLed(red()));
+        wait_for_call(&d, "set_led");
+        assert!(d.calls().contains(&"set_led dev-1 fixed #FF0000 0 0".to_string()));
+        let all = drain(&urx, Duration::from_millis(200));
+        assert!(all.contains(&Update::LedDone), "sempre sinaliza o fim da gravação");
+        let last = all.iter().rev().find_map(|u| if let Update::State(s) = u { Some(s.clone()) } else { None }).unwrap();
+        assert_eq!(last.device.unwrap().led.unwrap().current.effect, "fixed");
+        finish(tx, h);
+    }
+
+    #[test]
+    fn set_led_failure_reports_the_error_and_still_signals_done() {
+        let d = Arc::new(FakeDaemon::new());
+        d.inner.lock().unwrap().fail_next_write = Some(ApiError::Failed("mouse dormindo".into()));
+        let (tx, urx, h) = rig(d);
+        next_state(&urx);
+        cmd(&tx, Command::SetLed(red()));
+        let all = drain(&urx, Duration::from_millis(200));
+        assert!(all.contains(&Update::Error("mouse dormindo".into())), "{all:?}");
+        assert!(all.contains(&Update::LedDone));
+        finish(tx, h);
     }
 
     #[test]
@@ -594,6 +657,9 @@ mod tests {
             std::thread::sleep(Duration::from_millis(150));
             self.0.set_polling_rate(id, hz)
         }
+        fn led_effects(&self, id: &str) -> Result<Vec<String>, ApiError> { self.0.led_effects(id) }
+        fn get_led(&self, id: &str) -> Result<ghub_ipc::LedSetting, ApiError> { self.0.get_led(id) }
+        fn set_led(&self, id: &str, s: &ghub_ipc::LedSetting) -> Result<(), ApiError> { self.0.set_led(id, s) }
         fn list_profiles(&self) -> Result<Vec<String>, ApiError> { self.0.list_profiles() }
         fn get_active_profile(&self) -> Result<String, ApiError> { self.0.get_active_profile() }
         fn activate_profile(&self, n: &str) -> Result<(), ApiError> { self.0.activate_profile(n) }

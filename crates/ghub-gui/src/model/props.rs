@@ -72,6 +72,7 @@ mod tests {
             range: DpiRange { min: 100, max: 25600, step: 50, list: vec![] },
             polling_hz: 1000, polling_options: vec![500, 1000],
             battery_percent: 80, battery_state: "discharging".into(),
+            led: None,
         }
     }
     fn with(d: DeviceView) -> ViewState { ViewState { device: Some(d), ..ViewState::default() } }

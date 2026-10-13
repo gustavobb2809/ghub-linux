@@ -245,6 +245,7 @@ impl qobject::Backend {
         self.as_mut().set_selected_device(QString::from(p.selected_device.as_str()));
             }
             Update::Error(t) => self.as_mut().set_last_error(QString::from(t.as_str())),
+            Update::LedDone => {}
         }
     }
 
