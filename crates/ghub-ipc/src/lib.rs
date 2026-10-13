@@ -46,6 +46,15 @@ pub struct DeviceState {
     pub profile: String,
 }
 
+/// LED do perfil onboard ativo. `effect`: off | fixed | cycle | breathing; `color`: `#RRGGBB` ou vazio.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+pub struct LedSetting {
+    pub effect: String,
+    pub color: String,
+    pub period_ms: u32,
+    pub intensity: u32,
+}
+
 #[proxy(
     interface = "org.ghublinux.Daemon1",
     default_service = "org.ghublinux.Daemon",
@@ -57,6 +66,10 @@ pub trait Daemon {
     fn set_dpi_levels(&self, id: &str, levels: Vec<u32>, active: u32) -> zbus::Result<()>;
     fn set_active_dpi_level(&self, id: &str, active: u32) -> zbus::Result<()>;
     fn set_polling_rate(&self, id: &str, hz: u32) -> zbus::Result<()>;
+    /// Efeitos de LED suportados pelo dispositivo; vazio quando não há suporte.
+    fn led_effects(&self, id: &str) -> zbus::Result<Vec<String>>;
+    fn get_led(&self, id: &str) -> zbus::Result<LedSetting>;
+    fn set_led(&self, id: &str, effect: &str, color: &str, period_ms: u32, intensity: u32) -> zbus::Result<()>;
     fn list_profiles(&self) -> zbus::Result<Vec<String>>;
     fn get_active_profile(&self) -> zbus::Result<String>;
     fn activate_profile(&self, name: &str) -> zbus::Result<()>;
@@ -125,6 +138,17 @@ mod tests {
             battery_state: STATE_DISCHARGING.into(),
             profile: "Padrão".into(),
         };
+        assert_eq!(roundtrip(&v), v);
+    }
+
+    #[test]
+    fn led_setting_signature_is_stable() {
+        assert_eq!(LedSetting::SIGNATURE.to_string(), "(ssuu)");
+    }
+
+    #[test]
+    fn led_setting_roundtrips() {
+        let v = LedSetting { effect: "fixed".into(), color: "#FE8019".into(), period_ms: 0, intensity: 0 };
         assert_eq!(roundtrip(&v), v);
     }
 
