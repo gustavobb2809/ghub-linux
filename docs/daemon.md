@@ -182,15 +182,33 @@ O daemon publica um ícone na bandeja (StatusNotifierItem, via crate `ksni`, sem
 
 ### Menu
 
+Estrutura (segue o mock aprovado; separadores entre os blocos):
+
+```
+G703 LS                                  (cabeçalho, desabilitado)
+91 % · carregando · perfil Padrão        (desabilitado)
+▰▰▰▰▰▰▰▰▰▱                               (barra de bateria em texto; só com % conhecido)
+-----
+DPI: 1200 ▸                              (rádios: um por nível)
+Perfil: Padrão ▸                         (rádios: um por perfil)
+-----
+[ ] Iniciar com o sistema
+Abrir G HUB Linux
+Sair e parar o serviço
+```
+
 | Item | Significado |
 |---|---|
-| `<nome> — <bateria>` | Linha informativa do dispositivo principal (o primeiro conectado, senão o primeiro da lista): bateria em %, "(carregando)", "(carga completa)" ou "bateria desconhecida". Sem dispositivos: "Nenhum dispositivo encontrado". |
-| `<dpi> DPI · <hz> Hz` | DPI e polling lidos do mouse agora. Com o mouse offline vira "Inativo ou dormindo". |
-| DPI ▸ | Níveis de DPI do perfil ativo (rádio); escolher um chama `SetActiveDpiLevel` no dispositivo principal. Desabilitado com o mouse offline. |
+| Linha 1 | Nome do dispositivo principal (o primeiro conectado, senão o primeiro da lista). Sem dispositivos: só "Nenhum dispositivo encontrado". |
+| Linha 2 | `<bateria> · <estado> · perfil <ativo>`; estado = "carregando", "carga completa", "conectado" ou "inativo ou dormindo". Partes desconhecidas (bateria, perfil) são omitidas. |
+| Barra | 10 blocos (`▰`/`▱`), arredondando o percentual; omitida com bateria desconhecida. |
+| DPI: `<valor>` ▸ | Níveis de DPI do perfil ativo (rádio); escolher um chama `SetActiveDpiLevel` no dispositivo principal. Desabilitado com o mouse offline; ausente sem níveis. |
 | Perfil: `<nome>` ▸ | Perfis (rádio); escolher um ativa o perfil. |
 | Iniciar com o sistema | ✓ quando `ghubd.service` está habilitado. Desabilitado quando o serviço não está instalado. |
 | Abrir G HUB Linux | Abre a GUI (igual ao clique esquerdo no ícone). |
 | Sair e parar o serviço | Encerra o daemon (ver abaixo). |
+
+DPI e Perfil continuam submenus de propósito (não achatados no nível superior): o Quickshell só relê o menu após cliques em itens de submenu (ver "Compatibilidade com hosts de bandeja"). O estilo visual (cartão arredondado, barra fina, cores, "Sair" em vermelho) pertence ao host e não pode igualar o mock pixel a pixel; para isso seria preciso um popup QML próprio (não feito).
 
 Clique esquerdo no ícone abre a GUI (`ghub-gui`) por `systemd-run --user --scope --collect --quiet ghub-gui`: a GUI roda num escopo transitório próprio, fora do cgroup do daemon (sobrevive a um restart do `ghubd`); o programa é o `ghub-gui` ao lado do executável do `ghubd` (caminho absoluto) ou, na falta dele, o do PATH. O escopo herda o ambiente do `ghubd`, não o da janela da sessão (ver pendência 9). Sem `systemd-run`, o daemon lança `ghub-gui` direto. O `ghubd` acompanha o processo por 1,5 s: se ele sair com erro nesse prazo, a primeira linha do stderr (limitado a 2 KiB) vira notificação; se o `ghub-gui` não existir, a notificação avisa que a interface ainda não está instalada. A segunda abertura é tratada pela própria GUI (instância única), sem mudança no `ghubd`. Falhas das ações do menu (DPI, perfil, autostart, parar) também viram notificação.
 

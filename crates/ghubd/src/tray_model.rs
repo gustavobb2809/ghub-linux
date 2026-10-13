@@ -91,6 +91,36 @@ fn icon_state(device: Option<&DeviceState>) -> IconState {
     }
 }
 
+/// Barra de bateria em texto (10 blocos), como a barra fina do mock.
+fn battery_bar(percent: i32) -> String {
+    let filled = ((percent.clamp(0, 100) + 5) / 10) as usize;
+    format!("{}{}", "▰".repeat(filled), "▱".repeat(10 - filled))
+}
+
+/// Segunda linha do cabeçalho: "<bateria> · <estado> · perfil <ativo>", omitindo o que falta.
+fn status_line(d: &DeviceState, profile: &str) -> String {
+    let mut parts = Vec::new();
+    if d.battery_percent >= 0 {
+        parts.push(format!("{} %", d.battery_percent));
+    }
+    parts.push(
+        if !d.connected {
+            "inativo ou dormindo"
+        } else if d.battery_state == STATE_CHARGING {
+            "carregando"
+        } else if d.battery_state == STATE_FULL {
+            "carga completa"
+        } else {
+            "conectado"
+        }
+        .to_string(),
+    );
+    if !profile.is_empty() {
+        parts.push(format!("perfil {profile}"));
+    }
+    parts.join(" · ")
+}
+
 pub fn build_view(input: &TrayInput) -> TrayView {
     let device = input.primary.as_ref();
     let icon = icon_state(device);
@@ -103,15 +133,19 @@ pub fn build_view(input: &TrayInput) -> TrayView {
         }
         Some(d) => {
             let battery = battery_text(d.battery_percent, &d.battery_state);
-            entries.push(Entry::Info(format!("{} — {}", d.name, battery)));
+            let profile = if input.active_profile.is_empty() {
+                d.profile.as_str()
+            } else {
+                input.active_profile.as_str()
+            };
+            entries.push(Entry::Info(d.name.clone()));
+            entries.push(Entry::Info(status_line(d, profile)));
+            if d.battery_percent >= 0 {
+                entries.push(Entry::Info(battery_bar(d.battery_percent)));
+            }
             let text = if d.connected {
-                entries.push(Entry::Info(format!(
-                    "{} DPI · {} Hz",
-                    d.dpi_current, d.polling_hz
-                )));
                 format!("{battery} · {} DPI", d.dpi_current)
             } else {
-                entries.push(Entry::Info("Inativo ou dormindo".into()));
                 format!("Inativo ou dormindo · {battery}")
             };
             if !d.dpi_levels.is_empty() {
@@ -127,7 +161,12 @@ pub fn build_view(input: &TrayInput) -> TrayView {
     };
 
     if !input.profiles.is_empty() {
-        entries.push(Entry::Separator);
+        // Sem DPI, o separador do cabeçalho ainda não foi posto; nunca dois seguidos.
+        if entries.last() != Some(&Entry::Separator)
+            && !matches!(entries.last(), Some(Entry::Dpi { .. }))
+        {
+            entries.push(Entry::Separator);
+        }
         let selected = input
             .profiles
             .iter()
@@ -207,15 +246,15 @@ mod tests {
         assert_eq!(
             v.entries,
             vec![
-                Entry::Info("G703 — 91 %".into()),
-                Entry::Info("1200 DPI · 1000 Hz".into()),
+                Entry::Info("G703".into()),
+                Entry::Info("91 % · conectado · perfil Trabalho".into()),
+                Entry::Info("▰▰▰▰▰▰▰▰▰▱".into()),
                 Entry::Separator,
                 Entry::Dpi {
                     labels: vec!["800 DPI".into(), "1200 DPI".into(), "1600 DPI".into()],
                     selected: 1,
                     enabled: true
                 },
-                Entry::Separator,
                 Entry::Profiles {
                     labels: vec!["Padrão".into(), "Trabalho".into()],
                     selected: 1
@@ -226,6 +265,61 @@ mod tests {
                 Entry::Quit,
             ]
         );
+    }
+
+    #[test]
+    fn header_status_line_variants() {
+        let line = |p, st: &str, profile: &str| {
+            let mut i = input(Some(state(true, p, st)));
+            i.active_profile = profile.into();
+            match &build_view(&i).entries[1] {
+                Entry::Info(t) => t.clone(),
+                e => panic!("{e:?}"),
+            }
+        };
+        assert_eq!(line(91, STATE_CHARGING, "Padrão"), "91 % · carregando · perfil Padrão");
+        assert_eq!(line(100, STATE_FULL, "Padrão"), "100 % · carga completa · perfil Padrão");
+        // bateria desconhecida: sem trecho de % e sem barra
+        let mut i = input(Some(state(true, -1, "unknown")));
+        i.active_profile = String::new();
+        let v = build_view(&i);
+        // perfil vazio cai no perfil do dispositivo
+        assert_eq!(v.entries[1], Entry::Info("conectado · perfil Padrão".into()));
+        assert_eq!(v.entries[2], Entry::Separator);
+        let mut s = state(true, -1, "unknown");
+        s.profile = String::new();
+        let v = build_view(&input(Some(s)));
+        assert_eq!(v.entries[1], Entry::Info("conectado · perfil Trabalho".into()));
+    }
+
+    #[test]
+    fn battery_bar_rounds_to_ten_blocks() {
+        assert_eq!(battery_bar(0), "▱▱▱▱▱▱▱▱▱▱");
+        assert_eq!(battery_bar(82), "▰▰▰▰▰▰▰▰▱▱");
+        assert_eq!(battery_bar(100), "▰▰▰▰▰▰▰▰▰▰");
+    }
+
+    #[test]
+    fn menu_never_has_adjacent_or_edge_separators() {
+        for profiles in [true, false] {
+            for levels in [true, false] {
+                for dev in [true, false] {
+                    let mut s = state(true, 50, "discharging");
+                    if !levels {
+                        s.dpi_levels.clear();
+                    }
+                    let mut i = input(dev.then_some(s));
+                    if !profiles {
+                        i.profiles.clear();
+                    }
+                    let e = build_view(&i).entries;
+                    assert_ne!(e.first(), Some(&Entry::Separator));
+                    for pair in e.windows(2) {
+                        assert!(!(pair[0] == Entry::Separator && pair[1] == Entry::Separator));
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -255,8 +349,12 @@ mod tests {
         let v = build_view(&input(Some(state(false, 89, "unknown"))));
         assert_eq!(v.icon, IconState::Disconnected);
         assert_eq!(v.tooltip_text, "Inativo ou dormindo · 89 %");
-        assert_eq!(v.entries[0], Entry::Info("G703 — 89 %".into()));
-        assert_eq!(v.entries[1], Entry::Info("Inativo ou dormindo".into()));
+        assert_eq!(v.entries[0], Entry::Info("G703".into()));
+        assert_eq!(
+            v.entries[1],
+            Entry::Info("89 % · inativo ou dormindo · perfil Trabalho".into())
+        );
+        assert_eq!(v.entries[2], Entry::Info("▰▰▰▰▰▰▰▰▰▱".into()));
         assert!(v.entries.iter().any(
             |e| matches!(e, Entry::Dpi { enabled: false, .. })
         ));
