@@ -2,10 +2,12 @@
 
 Configure mouses Logitech no Linux sem o G HUB: DPI, taxa de polling, bateria, perfis, bandeja do sistema e iluminação do LED. Feito e testado com o **G703 Lightspeed**; outros dispositivos não foram verificados.
 
-- `ghubd`: serviço de usuário que fala HID++ 2.0 com o mouse (hidraw) e expõe uma API D-Bus. Também mantém o ícone da bandeja.
+- `ghubd`: serviço de usuário que fala HID++ 2.0 com o mouse (hidraw) e expõe uma API D-Bus. Também mantém o ícone da bandeja (DPI, perfil, "Iniciar com o sistema"), envia notificações de bateria baixa e pode iniciar com a sessão ou sob demanda pelo D-Bus.
 - `ghub-gui`: janela Qt 6/QML (cxx-qt) com Visão geral, Sensibilidade, Iluminação e Configurações.
 - `ghubctl`: linha de comando de diagnóstico (`probe`, `led get|set|restore`).
 - `hidpp`: biblioteca Rust do protocolo HID++ 2.0.
+
+Design: [docs/superpowers/specs/2026-10-12-ghub-linux-design.md](docs/superpowers/specs/2026-10-12-ghub-linux-design.md) (v1) e [2026-10-13-iluminacao-v1.1-design.md](docs/superpowers/specs/2026-10-13-iluminacao-v1.1-design.md) (iluminação).
 
 ## Instalar (usuário)
 
