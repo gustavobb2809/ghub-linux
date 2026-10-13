@@ -43,11 +43,14 @@ pub struct HidppMouse<T: Transport> {
     backup_dir: PathBuf,
     /// A cópia do setor original já foi salva nesta sessão do daemon.
     backed_up: bool,
+    /// Último LED lido/gravado: evita ~35 leituras HID++ a cada atualização da GUI. Some
+    /// só até reconectar (o objeto é recriado) ou até uma gravação falhar (estado incerto).
+    led_cache: Option<Led>,
 }
 
 impl<T: Transport> HidppMouse<T> {
     pub fn new(device: Device<T>) -> Self {
-        HidppMouse { device, backup_dir: onboard::default_backup_dir(), backed_up: false }
+        HidppMouse { device, backup_dir: onboard::default_backup_dir(), backed_up: false, led_cache: None }
     }
 
     pub fn with_backup_dir(mut self, dir: PathBuf) -> Self {
@@ -65,7 +68,9 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
         Ok(Capabilities {
             dpi: dpi::supported(&mut self.device, SENSOR)?,
             polling_hz: report_rate::supported_hz(&mut self.device)?,
-            led: if self.device.feature_index(onboard::ONBOARD_PROFILES).is_ok() {
+            led: if self.device.feature_index(onboard::ONBOARD_PROFILES).is_ok()
+                && onboard::supports_led(&mut self.device)
+            {
                 LedKind::ALL.to_vec()
             } else {
                 Vec::new()
@@ -90,19 +95,26 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
     }
 
     fn led(&mut self) -> MouseResult<Led> {
-        onboard::read_led(&mut self.device)
+        if let Some(led) = self.led_cache {
+            return Ok(led);
+        }
+        let led = onboard::read_led(&mut self.device)?;
+        self.led_cache = Some(led);
+        Ok(led)
     }
 
     fn set_led(&mut self, led: &Led) -> MouseResult<()> {
         let tag = format!("dev{}", self.device.device_index());
-        let HidppMouse { device, backup_dir, backed_up } = self;
-        onboard::set_led(device, led, |p| {
+        let HidppMouse { device, backup_dir, backed_up, led_cache } = self;
+        let result = onboard::set_led(device, led, |p| {
             if !*backed_up {
                 onboard::save_backup(backup_dir, &tag, p)?;
                 *backed_up = true;
             }
             Ok(())
-        })
+        });
+        *led_cache = if result.is_ok() { Some(*led) } else { None };
+        result
     }
 
     fn ping(&mut self) -> MouseResult<()> {
@@ -143,9 +155,44 @@ mod tests {
         let mut fake = FakeTransport::new();
         fake.push_incoming(long_reply(1, 11, fb(1), &[0, 0x00, 0x64, 0xE0, 0x32, 0x64, 0x00]));
         fake.push_incoming(long_reply(1, 10, fb(0), &[0b1000_1011]));
+        // fn0 de 0x8100: modelo 1, formato 4, 5 perfis, 16 setores de 0x00ff bytes.
+        fake.push_incoming(long_reply(1, 8, fb(0), &[1, 4, 1, 5, 1, 6, 0x10, 0x00, 0xff, 0x0a, 4, 0]));
         let features = HashMap::from([(0x2201u16, 11u8), (0x8060u16, 10u8), (0x8100u16, 8u8)]);
         let mut m = HidppMouse::new(Device::with_features(fake, 1, features));
         assert_eq!(m.capabilities().unwrap().led, LedKind::ALL.to_vec());
+    }
+
+    #[test]
+    fn capabilities_hide_the_led_for_an_unknown_onboard_layout() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 11, fb(1), &[0, 0x00, 0x64, 0xE0, 0x32, 0x64, 0x00]));
+        fake.push_incoming(long_reply(1, 10, fb(0), &[0b1000_1011]));
+        // Formato de perfil 5: os offsets do G703 não valem.
+        fake.push_incoming(long_reply(1, 8, fb(0), &[1, 5, 1, 5, 1, 6, 0x10, 0x00, 0xff, 0x0a, 4, 0]));
+        let features = HashMap::from([(0x2201u16, 11u8), (0x8060u16, 10u8), (0x8100u16, 8u8)]);
+        let mut m = HidppMouse::new(Device::with_features(fake, 1, features));
+        assert!(m.capabilities().unwrap().led.is_empty());
+    }
+
+    #[test]
+    fn the_led_is_read_from_the_mouse_only_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut once = led_mouse(MemOnboard::new(8, &CYCLE), dir.path());
+        once.led().unwrap();
+        let reads_once = once.into_device().into_transport().read_calls;
+        let mut twice = led_mouse(MemOnboard::new(8, &CYCLE), dir.path());
+        twice.led().unwrap();
+        twice.led().unwrap();
+        assert_eq!(twice.into_device().into_transport().read_calls, reads_once, "a 2ª leitura vem do cache");
+    }
+
+    #[test]
+    fn set_led_refreshes_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut m = led_mouse(MemOnboard::new(8, &CYCLE), dir.path());
+        m.led().unwrap();
+        m.set_led(&Led::Off).unwrap();
+        assert_eq!(m.led(), Ok(Led::Off));
     }
 
     const CYCLE: Led = Led::Cycle { period_ms: 8000, intensity: 0 };

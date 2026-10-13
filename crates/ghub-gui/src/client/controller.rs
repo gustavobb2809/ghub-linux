@@ -162,6 +162,9 @@ impl Controller {
         let needs_daemon = !matches!(cmd,
             Command::SelectDevice(_) | Command::SetAutostart(_) | Command::StartDaemon | Command::Refresh);
         if needs_daemon && self.daemon_down() {
+            // A gravação de LED nunca chega ao braço que sinaliza o fim: sem isto o formulário
+            // ficaria preso em "Gravando no mouse…".
+            if matches!(cmd, Command::SetLed(_)) { (self.sink)(Update::LedDone); }
             // Daemon realmente fora (a releitura acima confirmou): falha imediata, sem tocar na API.
             if self.pending.flush().is_some() {
                 self.fail(format!("A edição de DPI não foi aplicada: {}", ApiError::Unavailable));
@@ -300,6 +303,19 @@ mod tests {
         assert!(all.contains(&Update::LedDone), "sempre sinaliza o fim da gravação");
         let last = all.iter().rev().find_map(|u| if let Update::State(s) = u { Some(s.clone()) } else { None }).unwrap();
         assert_eq!(last.device.unwrap().led.unwrap().current.effect, "fixed");
+        finish(tx, h);
+    }
+
+    #[test]
+    fn set_led_with_the_daemon_down_still_signals_done() {
+        let d = Arc::new(FakeDaemon::scenario("stopped"));
+        let (tx, urx, h) = rig(d.clone());
+        next_state(&urx);
+        cmd(&tx, Command::SetLed(red()));
+        let all = drain(&urx, Duration::from_millis(200));
+        assert!(all.iter().any(|u| matches!(u, Update::Error(_))), "{all:?}");
+        assert!(all.contains(&Update::LedDone), "o formulário não pode ficar preso em 'Gravando'");
+        assert_eq!(count(&d, "set_led"), 0, "não toca na API com o daemon fora");
         finish(tx, h);
     }
 

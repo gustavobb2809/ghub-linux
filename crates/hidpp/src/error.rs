@@ -20,6 +20,8 @@ pub enum HidppError {
     BadChecksum,
     #[error("a leitura de volta da memória onboard difere do que foi gravado")]
     VerifyFailed,
+    #[error("não foi possível restaurar o setor original; use `ghubctl led restore` com a cópia de segurança")]
+    RestoreFailed,
     #[error("erro de E/S: {0}")]
     Io(String),
 }

@@ -34,3 +34,7 @@ Gravados no perfil 1 e confirmados a olho pelo usuário:
 - `off` → LED apagado (modo `0x00`).
 - `fixed #FE8019` pelo D-Bus (`SetLed`) → laranja fixo; gravação em ~0,7 s. A GUI gravou `cycle` 6500 ms.
 Todos os quatro efeitos de `LedKind::ALL` funcionam; nada saiu da lista. O daemon salva uma cópia do setor 1 por sessão em `~/.local/share/ghub-linux/onboard-backup/`.
+
+## Recuperação
+`set_led` tenta devolver o setor original (e confere lendo de volta) quando qualquer passo da gravação falha; se nem isso funcionar devolve `RestoreFailed`. Para regravar uma cópia de segurança à mão (com o `ghubd` parado):
+`ghubctl led restore ~/.local/share/ghub-linux/onboard-backup/<arquivo>.bin --yes` (o setor sai do nome `-sectorHHHH-`; a cópia precisa ter CRC válido).

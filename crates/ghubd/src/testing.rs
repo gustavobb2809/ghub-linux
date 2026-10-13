@@ -24,6 +24,8 @@ pub struct FakeState {
     pub polling_sets: Vec<u16>,
     pub led: Led,
     pub led_sets: Vec<Led>,
+    /// Recarregar o perfil onboard (set_led) devolve o DPI a este valor (simula o reset real).
+    pub dpi_after_led: Option<u16>,
     /// Com o mouse online, leituras falham.
     pub fail_reads: bool,
     /// Com o mouse online, escritas falham (e não são registradas).
@@ -52,6 +54,7 @@ impl FakeMouse {
             polling_sets: Vec::new(),
             led: Led::Cycle { period_ms: 8000, intensity: 0 },
             led_sets: Vec::new(),
+            dpi_after_led: None,
             fail_reads: false,
             fail_writes: false,
             fail_ping: false,
@@ -115,6 +118,9 @@ impl Mouse for FakeMouse {
         }
         s.led = *led;
         s.led_sets.push(*led);
+        if let Some(dpi) = s.dpi_after_led {
+            s.dpi = dpi;
+        }
         Ok(())
     }
 

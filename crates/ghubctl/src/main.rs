@@ -49,6 +49,21 @@ enum LedAction {
         #[arg(long)]
         yes: bool,
     },
+    /// Regrava uma cópia de segurança (`...-sectorHHHH-....bin`) no setor do perfil
+    Restore {
+        /// Arquivo salvo em ~/.local/share/ghub-linux/onboard-backup/
+        file: std::path::PathBuf,
+        /// Confirma a gravação na flash do mouse
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+/// Setor de uma cópia de segurança, lido do nome `...-sectorHHHH-...`.
+fn backup_sector(file: &std::path::Path) -> Option<u16> {
+    let name = file.file_name()?.to_str()?;
+    let rest = name.split("-sector").nth(1)?;
+    u16::from_str_radix(rest.get(..4)?, 16).ok()
 }
 
 /// Índices tentados em cada interface: slots do receptor (1-6), o próprio receptor (0xFF)
@@ -90,6 +105,26 @@ fn led(action: LedAction) -> Result<(), Box<dyn Error>> {
             let mut dev = open_onboard()?;
             let (effect, color, period, intensity) = onboard::read_led(&mut dev)?.parts();
             println!("effect={effect} color={color} period_ms={period} intensity={intensity}");
+            Ok(())
+        }
+        LedAction::Restore { file, yes } => {
+            let sector = backup_sector(&file)
+                .ok_or("o nome do arquivo deve conter -sectorHHHH- (como salvo pelo ghubctl/ghubd)")?;
+            let raw = std::fs::read(&file)?;
+            let bytes: onboard::Sector = raw
+                .as_slice()
+                .try_into()
+                .map_err(|_| format!("a cópia deve ter {} bytes (tem {})", onboard::SECTOR_SIZE, raw.len()))?;
+            if !onboard::verify(&bytes) {
+                return Err("a cópia de segurança tem CRC inválido; não será gravada".into());
+            }
+            if !yes {
+                println!("Regravaria {} no setor {sector:#06x}. Repita com --yes para gravar na flash do mouse.", file.display());
+                return Ok(());
+            }
+            let mut dev = open_onboard()?;
+            onboard::restore_sector(&mut dev, sector, &bytes)?;
+            println!("restaurado o setor {sector:#06x}");
             Ok(())
         }
         LedAction::Set { effect, color, period, intensity, yes } => {
@@ -198,5 +233,19 @@ fn describe<T: Transport>(dev: &mut Device<T>) {
     match report_rate::supported_hz(dev) {
         Ok(v) => println!("    polling suportado: {v:?} Hz"),
         Err(e) => println!("    polling suportado: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backup_sector_comes_from_the_file_name() {
+        let p = std::path::Path::new("/x/ghubctl-sector0001-1791898388.bin");
+        assert_eq!(backup_sector(p), Some(1));
+        assert_eq!(backup_sector(std::path::Path::new("dev1-sector01ab-9.bin")), Some(0x01ab));
+        assert_eq!(backup_sector(std::path::Path::new("sem-setor.bin")), None);
+        assert_eq!(backup_sector(std::path::Path::new("x-sectorzz-1.bin")), None);
     }
 }

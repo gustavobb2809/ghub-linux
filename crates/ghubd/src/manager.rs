@@ -309,6 +309,11 @@ impl<B: Backend> Manager<B> {
         }
         let mouse = self.devices[idx].mouse.as_mut().expect("online");
         mouse.set_led(&led).map_err(|e| ManagerError::Device(e.to_string()))?;
+        // Recarregar o perfil onboard devolve ao mouse o DPI e o polling gravados nele; reaplica
+        // os do perfil do daemon (só escreve o que difere).
+        if let Err(e) = self.apply_to(idx) {
+            eprintln!("ghubd: {id}: falha ao reaplicar o perfil depois do LED: {e}");
+        }
         self.emit(Event::DeviceChanged(id.to_string()));
         Ok(())
     }
@@ -1107,5 +1112,15 @@ mod tests {
         mouse.state().fail_writes = true;
         assert!(matches!(m.set_led("dev-1", Led::Off), Err(ManagerError::Device(_))));
         assert!(drain(&rx).is_empty(), "falha não emite DeviceChanged");
+    }
+
+    #[test]
+    fn set_led_reapplies_the_profile_dpi_after_the_onboard_reload() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        assert_eq!(mouse.state().dpi, 1600);
+        mouse.state().dpi_after_led = Some(800); // o reload do perfil onboard devolve o DPI dele
+        m.set_led("dev-1", Led::Off).unwrap();
+        assert_eq!(mouse.state().dpi, 1600, "o DPI do perfil do daemon volta a valer");
     }
 }

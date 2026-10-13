@@ -51,6 +51,8 @@ pub enum LedKind {
     Fixed,
     Cycle,
     Breathing,
+    /// Modo gravado por outro programa que não sabemos editar; nunca é oferecido.
+    Other,
 }
 
 impl LedKind {
@@ -62,6 +64,7 @@ impl LedKind {
             LedKind::Fixed => "fixed",
             LedKind::Cycle => "cycle",
             LedKind::Breathing => "breathing",
+            LedKind::Other => "other",
         }
     }
 }
@@ -73,6 +76,9 @@ pub enum Led {
     /// `intensity` 0 = 100 %.
     Cycle { period_ms: u16, intensity: u8 },
     Breathing { rgb: [u8; 3], period_ms: u16, waveform: u8, intensity: u8 },
+    /// Modo desconhecido lido do mouse (ex.: efeitos que o G HUB do Windows grava). Só leitura:
+    /// o daemon recusa gravá-lo.
+    Other { mode: u8 },
 }
 
 fn color_text(rgb: [u8; 3]) -> String {
@@ -96,6 +102,7 @@ impl Led {
             Led::Fixed { .. } => LedKind::Fixed,
             Led::Cycle { .. } => LedKind::Cycle,
             Led::Breathing { .. } => LedKind::Breathing,
+            Led::Other { .. } => LedKind::Other,
         }
     }
 
@@ -110,7 +117,7 @@ impl Led {
                 waveform: raw[6],
                 intensity: raw[7],
             },
-            _ => return Err(HidppError::UnexpectedResponse("unknown LED mode")),
+            mode => Led::Other { mode },
         })
     }
 
@@ -118,6 +125,7 @@ impl Led {
         let mut b = [0u8; LED_LEN];
         match *self {
             Led::Off => {}
+            Led::Other { mode } => b[0] = mode,
             Led::Fixed { rgb } => {
                 b[0] = MODE_FIXED;
                 b[1..4].copy_from_slice(&rgb);
@@ -175,10 +183,12 @@ impl Led {
             Led::Fixed { rgb } => ("fixed", color_text(rgb), 0, 0),
             Led::Cycle { period_ms, intensity } => ("cycle", String::new(), period_ms, intensity),
             Led::Breathing { rgb, period_ms, intensity, .. } => ("breathing", color_text(rgb), period_ms, intensity),
+            Led::Other { .. } => ("other", String::new(), 0, 0),
         }
     }
 }
 
+const FN_DESCRIBE: u8 = 0;
 const FN_RELOAD: u8 = 3;
 const FN_CURRENT: u8 = 4;
 const FN_READ: u8 = 5;
@@ -286,13 +296,66 @@ pub fn set_led<T: Transport>(
         return Ok(());
     }
     backup(&original)?;
-    write_sector(dev, new.sector, &new.bytes)?;
-    if read_sector(dev, new.sector)? != new.bytes {
-        write_sector(dev, original.sector, &original.bytes)?;
-        return Err(HidppError::VerifyFailed);
+    let outcome = write_sector(dev, new.sector, &new.bytes)
+        .and_then(|()| read_sector(dev, new.sector))
+        .and_then(|back| if back == new.bytes { Ok(()) } else { Err(HidppError::VerifyFailed) });
+    if let Err(first) = outcome {
+        // Qualquer falha depois de começar a gravar deixa o setor em estado incerto:
+        // tenta devolver o original e confirma lendo de volta.
+        let restored = write_sector(dev, original.sector, &original.bytes)
+            .and_then(|()| read_sector(dev, original.sector))
+            .is_ok_and(|back| back == original.bytes);
+        return Err(if restored { first } else { HidppError::RestoreFailed });
     }
     dev.call(ONBOARD_PROFILES, FN_RELOAD, &[0, new.number])?;
     Ok(())
+}
+
+/// Regrava `bytes` (de uma cópia de segurança) no `sector`, confere lendo de volta e recarrega o
+/// perfil ativo. Não lê o setor atual: serve justamente para quando ele está corrompido.
+pub fn restore_sector<T: Transport>(dev: &mut Device<T>, sector: u16, bytes: &Sector) -> Result<()> {
+    if !verify(bytes) {
+        return Err(HidppError::BadChecksum);
+    }
+    write_sector(dev, sector, bytes)?;
+    if read_sector(dev, sector)? != *bytes {
+        return Err(HidppError::VerifyFailed);
+    }
+    // Recarregar é só cortesia: se falhar, a restauração em si já foi confirmada.
+    if let Ok(p) = dev.call(ONBOARD_PROFILES, FN_CURRENT, &[]) {
+        if p[1] != 0 {
+            let _ = dev.call(ONBOARD_PROFILES, FN_RELOAD, &[0, p[1]]);
+        }
+    }
+    Ok(())
+}
+
+/// Descrição da memória onboard (`fn0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Description {
+    pub memory_model: u8,
+    pub profile_format: u8,
+    pub sector_count: u8,
+    pub sector_size: u16,
+}
+
+pub fn describe<T: Transport>(dev: &mut Device<T>) -> Result<Description> {
+    let r = dev.call(ONBOARD_PROFILES, FN_DESCRIBE, &[])?;
+    Ok(Description {
+        memory_model: r[0],
+        profile_format: r[1],
+        sector_count: r[6],
+        sector_size: u16::from_be_bytes([r[7], r[8]]),
+    })
+}
+
+/// Só o layout conferido no G703 LS (modelo de memória 1, formato de perfil 4, setores de 255
+/// bytes) tem os offsets de LED conhecidos; qualquer outro dispositivo fica sem LED.
+pub fn supports_led<T: Transport>(dev: &mut Device<T>) -> bool {
+    matches!(
+        describe(dev),
+        Ok(d) if d.memory_model == 1 && d.profile_format == 4 && usize::from(d.sector_size) == SECTOR_SIZE
+    )
 }
 
 /// `$XDG_DATA_HOME/ghub-linux/onboard-backup` (padrão `~/.local/share/...`).
@@ -362,11 +425,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_mode_is_an_error() {
-        assert_eq!(
-            Led::parse(&[0x7f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-            Err(HidppError::UnexpectedResponse("unknown LED mode"))
-        );
+    fn unknown_mode_is_reported_not_fatal() {
+        // Modos que o G HUB do Windows grava (ex.: 0x04) não devem derrubar a leitura.
+        let led = Led::parse(&[0x7f, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        assert_eq!(led, Led::Other { mode: 0x7f });
+        assert_eq!(led.parts(), ("other", String::new(), 0, 0));
+        assert_eq!(led.kind().name(), "other");
+        assert!(!LedKind::ALL.contains(&led.kind()), "Other nunca é oferecido como efeito");
+        assert!(Led::from_parts("other", "", 0, 0).is_err());
     }
 
     #[test]
@@ -526,5 +592,59 @@ mod tests {
     #[test]
     fn default_backup_dir_ends_with_the_app_path() {
         assert!(default_backup_dir().ends_with("ghub-linux/onboard-backup"));
+    }
+
+    #[test]
+    fn a_transport_error_mid_write_still_tries_to_restore_the_original() {
+        let mut mem = MemOnboard::new(FI, &CYCLE);
+        mem.fail_nth_chunk = Some(3);
+        let original = mem.sectors[&1];
+        let mut d = dev(mem);
+        assert_eq!(set_led(&mut d, &RED, |_| Ok(())), Err(HidppError::Timeout));
+        let mem = d.into_transport();
+        assert_eq!(mem.commits, vec![1], "uma regravação do original");
+        assert_eq!(mem.sectors[&1], original);
+    }
+
+    #[test]
+    fn a_failed_restore_is_reported_distinctly() {
+        let mut mem = MemOnboard::new(FI, &CYCLE);
+        mem.corrupt_all_commits = true;
+        let mut d = dev(mem);
+        assert_eq!(set_led(&mut d, &RED, |_| Ok(())), Err(HidppError::RestoreFailed));
+        assert_eq!(d.into_transport().commits, vec![1, 1], "gravou e tentou restaurar");
+    }
+
+    #[test]
+    fn restore_sector_writes_a_valid_backup_verifies_and_reloads() {
+        let mut mem = MemOnboard::new(FI, &CYCLE);
+        let good = mem.sectors[&1];
+        mem.sectors.get_mut(&1).unwrap()[20] ^= 0xff; // setor corrompido no mouse
+        let mut d = dev(mem);
+        restore_sector(&mut d, 1, &good).unwrap();
+        let mem = d.into_transport();
+        assert_eq!(mem.sectors[&1], good);
+        assert_eq!(mem.reloads, vec![1]);
+    }
+
+    #[test]
+    fn restore_sector_refuses_a_backup_with_a_bad_crc() {
+        let mem = MemOnboard::new(FI, &CYCLE);
+        let mut bad = mem.sectors[&1];
+        bad[7] ^= 1;
+        let mut d = dev(mem);
+        assert_eq!(restore_sector(&mut d, 1, &bad), Err(HidppError::BadChecksum));
+        assert!(d.into_transport().commits.is_empty());
+    }
+
+    #[test]
+    fn supports_led_only_for_the_layout_verified_on_the_g703() {
+        let mut d = dev(MemOnboard::new(FI, &CYCLE));
+        assert!(supports_led(&mut d));
+        for (idx, val) in [(0usize, 2u8), (1, 5), (8, 0xfe)] {
+            let mut mem = MemOnboard::new(FI, &CYCLE);
+            mem.description[idx] = val;
+            assert!(!supports_led(&mut dev(mem)), "byte {idx} = {val}");
+        }
     }
 }

@@ -27,6 +27,15 @@ pub struct MemOnboard {
     pub commits: Vec<u16>,
     /// A próxima gravação sai com um byte trocado (simula falha de flash).
     pub corrupt_next_commit: bool,
+    /// Toda gravação sai com um byte trocado (a restauração também falha).
+    pub corrupt_all_commits: bool,
+    /// O `fn7` de ordem N (a partir de 1) falha uma vez com `Timeout` (mouse sumiu no meio).
+    pub fail_nth_chunk: Option<usize>,
+    chunk_calls: usize,
+    /// Leituras `fn5` atendidas (para provar cache).
+    pub read_calls: usize,
+    /// Resposta de `fn0` (descrição da memória).
+    pub description: [u8; 12],
     cursor: u16,
     staging: Vec<u8>,
     incoming: VecDeque<Vec<u8>>,
@@ -45,6 +54,11 @@ impl MemOnboard {
             reloads: vec![],
             commits: vec![],
             corrupt_next_commit: false,
+            corrupt_all_commits: false,
+            fail_nth_chunk: None,
+            chunk_calls: 0,
+            read_calls: 0,
+            description: [0x01, 0x04, 0x01, 0x05, 0x01, 0x06, 0x10, 0x00, 0xff, 0x0a, 0x04, 0x00],
             cursor: 0,
             staging: vec![],
             incoming: VecDeque::new(),
@@ -57,12 +71,14 @@ impl Transport for MemOnboard {
         assert_eq!(data[2], self.feature_index, "feature errada");
         let (func, p) = (data[3] >> 4, &data[4..]);
         let reply: Vec<u8> = match func {
+            0 => self.description.to_vec(),
             3 => {
                 self.reloads.push(p[1]);
                 vec![]
             }
             4 => vec![0, self.profile_number],
             5 => {
+                self.read_calls += 1;
                 let sector = u16::from_be_bytes([p[0], p[1]]);
                 let off = usize::from(u16::from_be_bytes([p[2], p[3]]));
                 let mem = &self.sectors[&sector];
@@ -74,13 +90,18 @@ impl Transport for MemOnboard {
                 vec![]
             }
             7 => {
+                self.chunk_calls += 1;
+                if self.fail_nth_chunk == Some(self.chunk_calls) {
+                    self.fail_nth_chunk = None;
+                    return Err(crate::error::HidppError::Timeout);
+                }
                 self.staging.extend_from_slice(&p[..16]);
                 vec![]
             }
             8 => {
                 let mut s: Sector = [0; SECTOR_SIZE];
                 s.copy_from_slice(&self.staging[..SECTOR_SIZE]);
-                if std::mem::take(&mut self.corrupt_next_commit) {
+                if std::mem::take(&mut self.corrupt_next_commit) || self.corrupt_all_commits {
                     s[10] ^= 0xff;
                 }
                 self.sectors.insert(self.cursor, s);

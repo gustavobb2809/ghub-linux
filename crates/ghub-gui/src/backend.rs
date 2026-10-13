@@ -403,6 +403,7 @@ impl qobject::Backend {
             .and_then(|d| d.led.as_ref().map(|l| l.effects.clone()))
             .unwrap_or_default();
         match crate::model::led::validate(&effect.to_string(), &color.to_string(), period_ms, intensity, &supported) {
+            Ok(_) if self.rust().tx.is_none() => QString::from("Sem conexão com o serviço ghubd."),
             Ok(setting) => {
                 self.as_mut().set_led_busy(true);
                 self.send(Command::SetLed(setting));
