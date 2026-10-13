@@ -30,6 +30,9 @@ Item {
                         id: prow
                         required property string modelData
                         readonly property bool active: modelData === page.backend.activeProfile
+                        readonly property bool canDelete: page.profiles.length > 1 && !active
+                        readonly property bool asking: canDelete && page.confirming === modelData
+                        onActiveChanged: if (active) page.confirming = ""
                         Layout.fillWidth: true
                         implicitHeight: 40
                         radius: 8
@@ -38,7 +41,7 @@ Item {
                             id: rowArea
                             anchors.fill: parent
                             hoverEnabled: true
-                            onClicked: page.backend.activateProfile(prow.modelData)
+                            onClicked: { page.confirming = ""; page.backend.activateProfile(prow.modelData) }
                         }
                         RowLayout {
                             anchors { fill: parent; leftMargin: 12; rightMargin: 8 }
@@ -59,25 +62,24 @@ Item {
                                 font.pixelSize: 12
                             }
                             Text {
-                                visible: page.confirming === prow.modelData
+                                visible: prow.asking
                                 text: "Apagar?"
                                 color: Theme.bad
                                 font.family: Theme.uiFonts[0]
                                 font.pixelSize: 13
                             }
                             PillButton {
-                                visible: page.confirming === prow.modelData
+                                visible: prow.asking
                                 text: "Sim"
                                 onClicked: { page.confirming = ""; page.backend.deleteProfile(prow.modelData) }
                             }
                             PillButton {
-                                visible: page.confirming === prow.modelData
+                                visible: prow.asking
                                 text: "Não"
                                 onClicked: page.confirming = ""
                             }
                             PillButton {
-                                visible: page.profiles.length > 1 && !prow.active
-                                         && page.confirming !== prow.modelData
+                                visible: prow.canDelete && !prow.asking
                                 text: "Apagar"
                                 onClicked: page.confirming = prow.modelData
                             }

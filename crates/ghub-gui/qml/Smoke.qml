@@ -39,7 +39,26 @@ QtObject {
         case "dimmed":
             // mouse dormindo: controles desabilitados e nunca "0 DPI"
             return b.hasDevice && !b.connected && !root.win.sensitivityUsable()
-                && root.win.overviewDpiText().indexOf("0 DPI") < 0
+                && b.dpiText === "lendo…" && root.win.overviewDpiText() === "lendo…"
+        case "nav": {
+            // clicar na aba ativa nao a desmarca (nem a torna "checkable")
+            const w = root.win
+            w.goTo(1)
+            const t = w.navTab(1)
+            if (!t.enabled || t.checkable || !t.checked) return false
+            t.clicked()
+            return t.checked && w.currentIndex === 1 && !w.navTab(0).checked
+        }
+        case "rebind": {
+            // edicao rejeitada nao pode quebrar o binding do campo; blur sem mudanca nao escreve
+            const w = root.win
+            if (!b.hasDevice || !w.sensitivityUsable()) return false
+            w.sensitivityEdit(0, "7")
+            if (w.sensitivityFieldText(0) !== "800") return false
+            w.sensitivityEdit(1, "1200")
+            if (w.sensitivityCommits() !== 0) return false
+            return b.setDpiLevel(0, 1000) === "" && w.sensitivityFieldText(0) === "1000"
+        }
         case "release": {
             // soltar o slider e terminar a edicao do campo chamam commitDpi
             const w = root.win

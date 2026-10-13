@@ -99,3 +99,28 @@ fn slider_release_and_field_edit_commit_the_dpi() {
 fn counter_proof_release_fails_when_mouse_is_asleep() {
     assert_eq!(run("release", Some("sleeping")), 7);
 }
+
+#[test]
+fn clicking_the_active_tab_keeps_it_checked() {
+    assert_eq!(run("nav", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_nav_fails_when_tabs_are_disabled() {
+    assert_eq!(run("nav", Some("stopped")), 7);
+}
+
+#[test]
+fn rejected_edit_keeps_the_field_following_the_model() {
+    assert_eq!(run("rebind", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_rebind_fails_when_mouse_is_asleep() {
+    assert_eq!(run("rebind", Some("sleeping")), 7);
+}
+
+#[test]
+fn qml_load_failure_exits_with_code_1_instead_of_hanging() {
+    assert_eq!(run("load-failure", Some("running")), 1);
+}

@@ -21,6 +21,7 @@ Item {
     }
     // usado pelo smoke: simula soltar o slider / terminar a edicao do campo
     function simulateRelease(i) { levelRepeater.itemAt(i).slider.pressedChanged() }
+    function fieldText(i) { return levelRepeater.itemAt(i).field.text }
     function simulateEdit(i, t) {
         const it = levelRepeater.itemAt(i)
         it.field.text = t
@@ -92,11 +93,13 @@ Item {
                                 }
                                 onEditingFinished: {
                                     const v = parseInt(text)
+                                    // o usuario sobrescreveu `text`: restaura o binding
+                                    text = Qt.binding(() => String(row.dpi))
+                                    if (!isNaN(v) && v === row.dpi) { page.fail(row.index, ""); return }
                                     const err = isNaN(v) ? page.backend.validateDpi(0)
                                                          : page.backend.setDpiLevel(row.index, v)
                                     page.fail(row.index, err)
                                     if (err === "") page.commit()
-                                    else text = String(row.dpi)
                                 }
                             }
                             Slider {

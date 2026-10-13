@@ -28,8 +28,12 @@ fn main() {
     // Smoke nao adquire a instancia unica (nao toca o barramento).
     let mut _primary = None;
     let qml = if let Some(name) = &smoke {
-        let _ = name;
-        "qrc:/qt/qml/org/ghublinux/gui/qml/Smoke.qml"
+        if name == "load-failure" {
+            // cenario de teste: QML inexistente deve encerrar com codigo 1
+            "qrc:/qt/qml/org/ghublinux/gui/qml/DoesNotExist.qml"
+        } else {
+            "qrc:/qt/qml/org/ghublinux/gui/qml/Smoke.qml"
+        }
     } else {
         match single_instance::acquire(single_instance::GUI_BUS_NAME, single_instance::GUI_PATH) {
             Ok(Acquired::Other) => std::process::exit(0),
@@ -48,7 +52,14 @@ fn main() {
     cxx_qt::init_qml_module!("org.ghublinux.gui");
     let mut app = QGuiApplication::new();
     let mut engine = QQmlApplicationEngine::new();
-    if let Some(engine) = engine.as_mut() {
+    if let Some(mut engine) = engine.as_mut() {
+        engine
+            .as_mut()
+            .on_object_creation_failed(|_, url| {
+                eprintln!("ghub-gui: falha ao carregar o QML {}", url);
+                std::process::exit(1);
+            })
+            .release();
         engine.load(&QUrl::from(qml));
     }
     let code = app.as_mut().map(|a| a.exec()).unwrap_or(1);

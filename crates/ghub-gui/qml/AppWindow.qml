@@ -19,6 +19,8 @@ ApplicationWindow {
 
     function goTo(i) { if (i >= 0 && i < pageCount) currentIndex = i }
     function sensitivityLevelCount() { return sensitivity.levelCount }
+    function navTab(i) { return [nav0, nav1, nav2][i] }
+    function sensitivityFieldText(i) { return sensitivity.fieldText(i) }
     function sensitivityUsable() { return sensitivity.usable }
     function sensitivityCommits() { return sensitivity.commits }
     function sensitivityRelease(i) { sensitivity.simulateRelease(i) }
@@ -59,6 +61,7 @@ ApplicationWindow {
                     }
                 }
                 NavTab {
+                    id: nav0
                     Layout.fillWidth: true
                     text: "Visão geral"
                     enabled: win.pagesVisible
@@ -66,6 +69,7 @@ ApplicationWindow {
                     onClicked: win.goTo(0)
                 }
                 NavTab {
+                    id: nav1
                     Layout.fillWidth: true
                     text: "Sensibilidade"
                     enabled: win.pagesVisible
@@ -75,6 +79,7 @@ ApplicationWindow {
                 NavTab { Layout.fillWidth: true; text: "Iluminação"; enabled: false; badge: "v1.1" }
                 NavTab { Layout.fillWidth: true; text: "Botões"; enabled: false; badge: "v1.2" }
                 NavTab {
+                    id: nav2
                     Layout.fillWidth: true
                     text: "Configurações"
                     enabled: win.pagesVisible

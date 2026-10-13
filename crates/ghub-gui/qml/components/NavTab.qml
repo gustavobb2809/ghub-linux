@@ -6,7 +6,6 @@ import org.ghublinux.gui
 AbstractButton {
     id: tab
     property string badge: ""
-    checkable: true
     implicitHeight: 40
     implicitWidth: 180
     opacity: enabled ? 1 : 0.45
