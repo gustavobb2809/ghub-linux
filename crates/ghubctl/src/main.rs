@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use hidpp::device::{Device, DEFAULT_TIMEOUT};
 use hidpp::enumerate::list_logitech;
-use hidpp::features::{self, battery, dpi, report_rate};
+use hidpp::features::{self, battery, dpi, onboard, report_rate};
 use hidpp::hidraw::HidrawTransport;
 use hidpp::transport::Transport;
 
@@ -21,6 +21,34 @@ enum Command {
     List,
     /// Descobre dispositivos e features (somente leitura)
     Probe,
+    /// Lê ou grava o LED do perfil onboard ativo (pare o ghubd antes: `systemctl --user stop ghubd`)
+    Led {
+        #[command(subcommand)]
+        action: LedAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum LedAction {
+    /// Mostra o efeito gravado no perfil ativo
+    Get,
+    /// Grava um efeito (sem --yes só mostra o que faria)
+    Set {
+        /// off | fixed | cycle | breathing
+        effect: String,
+        /// #RRGGBB (fixed e breathing)
+        #[arg(long, default_value = "")]
+        color: String,
+        /// Período em ms (cycle e breathing)
+        #[arg(long, default_value_t = 4000)]
+        period: u32,
+        /// 0 a 100; 0 = 100% (cycle e breathing)
+        #[arg(long, default_value_t = 0)]
+        intensity: u32,
+        /// Confirma a gravação na flash do mouse
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Índices tentados em cada interface: slots do receptor (1-6), o próprio receptor (0xFF)
@@ -32,6 +60,54 @@ fn main() -> Result<(), Box<dyn Error>> {
     match Cli::parse().command {
         Command::List => list(),
         Command::Probe => probe(),
+        Command::Led { action } => led(action),
+    }
+}
+
+fn open_onboard() -> Result<Device<HidrawTransport>, Box<dyn Error>> {
+    for info in list_logitech()? {
+        let Ok(mut transport) = HidrawTransport::open(&info.path) else { continue };
+        for index in CANDIDATE_INDICES {
+            let mut dev = Device::new(transport, index);
+            dev.set_timeout(PING_TIMEOUT);
+            let found = dev.ping().is_ok() && {
+                dev.set_timeout(DEFAULT_TIMEOUT);
+                dev.discover().is_ok()
+            } && dev.feature_index(onboard::ONBOARD_PROFILES).is_ok();
+            if found {
+                dev.set_timeout(DEFAULT_TIMEOUT);
+                return Ok(dev);
+            }
+            transport = dev.into_transport();
+        }
+    }
+    Err("nenhum dispositivo com perfis onboard (0x8100) encontrado".into())
+}
+
+fn led(action: LedAction) -> Result<(), Box<dyn Error>> {
+    match action {
+        LedAction::Get => {
+            let mut dev = open_onboard()?;
+            let (effect, color, period, intensity) = onboard::read_led(&mut dev)?.parts();
+            println!("effect={effect} color={color} period_ms={period} intensity={intensity}");
+            Ok(())
+        }
+        LedAction::Set { effect, color, period, intensity, yes } => {
+            let led = onboard::Led::from_parts(&effect, &color, period, intensity)?;
+            if !yes {
+                println!("Gravaria {led:?} no perfil ativo. Repita com --yes para gravar na flash do mouse.");
+                return Ok(());
+            }
+            let mut dev = open_onboard()?;
+            let dir = onboard::default_backup_dir();
+            onboard::set_led(&mut dev, &led, |p| {
+                let path = onboard::save_backup(&dir, "ghubctl", p)?;
+                println!("cópia de segurança: {}", path.display());
+                Ok(())
+            })?;
+            println!("gravado: {led:?}");
+            Ok(())
+        }
     }
 }
 
