@@ -14,6 +14,8 @@ pub struct Props {
     pub profile_differs: bool, pub profile_diff_text: String,
     pub autostart_known: bool, pub autostart_enabled: bool,
     pub devices_json: String, pub show_device_selector: bool, pub selected_device: String,
+    pub led_supported: bool, pub led_effects_json: String, pub led_effect: String, pub led_color: String,
+    pub led_period_ms: i32, pub led_intensity: i32,
 }
 
 impl From<&ViewState> for Props {
@@ -28,7 +30,7 @@ impl From<&ViewState> for Props {
                 &v.choices.iter().map(|c| serde_json::json!({"id": c.id, "name": c.name})).collect::<Vec<_>>(),
             ).unwrap_or_else(|_| "[]".into()),
             show_device_selector: v.choices.len() >= 2,
-            dpi_levels_json: "[]".into(), polling_options_json: "[]".into(),
+            dpi_levels_json: "[]".into(), polling_options_json: "[]".into(), led_effects_json: "[]".into(),
             battery_percent: -1, battery_text: battery_text(-1, ""), dpi_text: dpi_text(0),
             polling_text: polling_text(0),
             ..Props::default()
@@ -49,6 +51,14 @@ impl From<&ViewState> for Props {
             p.polling_hz = d.polling_hz as i32;
             p.polling_text = polling_text(d.polling_hz);
             p.polling_options_json = json_u32s(&d.polling_options);
+            if let Some(l) = &d.led {
+                p.led_supported = true;
+                p.led_effects_json = json_strings(&l.effects);
+                p.led_effect = l.current.effect.clone();
+                p.led_color = l.current.color.clone();
+                p.led_period_ms = l.current.period_ms as i32;
+                p.led_intensity = l.current.intensity as i32;
+            }
             p.profile_differs = d.profile_differs();
             if p.profile_differs {
                 let want = d.dpi_levels.get(d.active_level as usize).copied().unwrap_or(0);
@@ -76,6 +86,21 @@ mod tests {
         }
     }
     fn with(d: DeviceView) -> ViewState { ViewState { device: Some(d), ..ViewState::default() } }
+
+    #[test]
+    fn led_props_follow_the_device() {
+        use crate::model::state::LedView;
+        assert!(!Props::from(&ViewState::default()).led_supported);
+        let d = dev(true, 1200).with_led(Some(LedView {
+            effects: vec!["fixed".into(), "cycle".into()],
+            current: ghub_ipc::LedSetting { effect: "fixed".into(), color: "#FE8019".into(), period_ms: 0, intensity: 0 },
+        }));
+        let p = Props::from(&with(d));
+        assert!(p.led_supported);
+        assert_eq!(p.led_effects_json, "[\"fixed\",\"cycle\"]");
+        assert_eq!((p.led_effect.as_str(), p.led_color.as_str()), ("fixed", "#FE8019"));
+        assert!(!Props::from(&with(dev(true, 1200))).led_supported);
+    }
 
     #[test]
     fn default_state_props() {
