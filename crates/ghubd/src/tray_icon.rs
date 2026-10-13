@@ -1,4 +1,6 @@
-//! Ícone simbólico do pinguim, rasterizado em código (ARGB32, ordem de rede).
+//! Ícone simbólico do ghub, rasterizado em código (ARGB32, ordem de rede): um
+//! anel com um mouse visto de cima (corpo em pílula, roda e divisória vazadas),
+//! a mesma silhueta de `packaging/icons/org.ghublinux.Gui-symbolic.svg`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconState {
@@ -23,27 +25,25 @@ const GREEN: [u8; 3] = [0xb8, 0xbb, 0x26];
 /// Subamostras por eixo (4x4 = 16 por pixel) para suavizar as bordas.
 const SS: u32 = 4;
 
-fn in_ellipse(x: f32, y: f32, cx: f32, cy: f32, rx: f32, ry: f32) -> bool {
-    let dx = (x - cx) / rx;
-    let dy = (y - cy) / ry;
-    dx * dx + dy * dy <= 1.0
-}
-
 fn in_circle(x: f32, y: f32, cx: f32, cy: f32, r: f32) -> bool {
-    in_ellipse(x, y, cx, cy, r, r)
+    let (dx, dy) = (x - cx, y - cy);
+    dx * dx + dy * dy <= r * r
 }
 
-/// O pinguim num quadrado unitário: corpo, asas e pés, com barriga e olhos vazados.
+/// Distância de (x, y) ao segmento vertical (cx, y0..y1): base das "cápsulas".
+fn dist_vseg(x: f32, y: f32, cx: f32, y0: f32, y1: f32) -> f32 {
+    let dy = if y < y0 { y0 - y } else if y > y1 { y - y1 } else { 0.0 };
+    ((x - cx) * (x - cx) + dy * dy).sqrt()
+}
+
+/// O emblema num quadrado unitário: anel + mouse em pílula, com roda e divisória vazadas.
 fn glyph_at(x: f32, y: f32) -> bool {
-    let shape = in_ellipse(x, y, 0.5, 0.55, 0.26, 0.36)
-        || in_ellipse(x, y, 0.235, 0.62, 0.065, 0.20)
-        || in_ellipse(x, y, 0.765, 0.62, 0.065, 0.20)
-        || in_ellipse(x, y, 0.38, 0.93, 0.09, 0.045)
-        || in_ellipse(x, y, 0.62, 0.93, 0.09, 0.045);
-    let cut = in_ellipse(x, y, 0.5, 0.64, 0.15, 0.24)
-        || in_circle(x, y, 0.43, 0.36, 0.045)
-        || in_circle(x, y, 0.57, 0.36, 0.045);
-    shape && !cut
+    let d = ((x - 0.5) * (x - 0.5) + (y - 0.5) * (y - 0.5)).sqrt();
+    let ring = (0.39..=0.48).contains(&d);
+    let body = dist_vseg(x, y, 0.5, 0.40, 0.60) <= 0.17;
+    let wheel = dist_vseg(x, y, 0.5, 0.335, 0.41) <= 0.035;
+    let divider = (y - 0.55).abs() <= 0.025;
+    ring || (body && !wheel && !divider)
 }
 
 fn sample(state: IconState, x: f32, y: f32) -> Option<[u8; 3]> {
@@ -125,15 +125,20 @@ mod tests {
     }
 
     #[test]
-    fn head_is_opaque_glyph_color() {
+    fn ring_and_body_are_opaque_glyph_color() {
         let p = render(IconState::Normal, 48);
-        assert_eq!(px(&p, 24, 12), [255, 0xeb, 0xdb, 0xb2]);
+        assert_eq!(px(&p, 24, 3), [255, 0xeb, 0xdb, 0xb2], "anel (topo)");
+        assert_eq!(px(&p, 24, 33), [255, 0xeb, 0xdb, 0xb2], "corpo do mouse");
+        assert_eq!(px(&p, 3, 24), [255, 0xeb, 0xdb, 0xb2], "anel (esquerda)");
     }
 
     #[test]
-    fn belly_is_cut_out() {
+    fn gap_wheel_and_divider_are_cut_out() {
         let p = render(IconState::Normal, 48);
-        assert_eq!(px(&p, 24, 31)[0], 0);
+        assert_eq!(px(&p, 24, 7)[0], 0, "vão entre anel e corpo");
+        assert_eq!(px(&p, 24, 18)[0], 0, "roda");
+        assert_eq!(px(&p, 24, 26)[0], 0, "divisória");
+        assert_eq!(px(&p, 24, 24)[0], 255, "corpo entre a roda e a divisória");
     }
 
     #[test]
@@ -150,8 +155,8 @@ mod tests {
     fn disconnected_is_dimmer_but_visible() {
         let normal = render(IconState::Normal, 48);
         let off = render(IconState::Disconnected, 48);
-        assert_eq!(px(&normal, 24, 12)[0], 255);
-        let alpha = px(&off, 24, 12)[0];
+        assert_eq!(px(&normal, 24, 33)[0], 255);
+        let alpha = px(&off, 24, 33)[0];
         assert!((90..=110).contains(&alpha), "alpha = {alpha}");
     }
 
