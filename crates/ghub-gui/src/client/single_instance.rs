@@ -31,11 +31,18 @@ pub enum Acquired {
 /// Tenta ser a instancia unica. Se o nome ja tem dono, pede a ele que mostre a janela.
 pub fn acquire(name: &str, path: &str) -> Result<Acquired, zbus::Error> {
     let (tx, rx) = channel();
-    match zbus::blocking::connection::Builder::session()?
-        .name(name.to_string())?
+    // O Builder do zbus NAO ativa DoNotQueue (apesar da doc): um segundo
+    // requisitante entraria na fila e `build()` retornaria Ok. Por isso o
+    // nome e pedido explicitamente com DoNotQueue, depois de registrar o
+    // objeto (serve_at), e `Exists` vira `NameTaken`.
+    let built = zbus::blocking::connection::Builder::session()?
         .serve_at(path.to_string(), GuiService { tx })?
         .build()
-    {
+        .and_then(|conn| {
+            conn.request_name_with_flags(name.to_string(), zbus::fdo::RequestNameFlags::DoNotQueue.into())
+                .map(|_| conn)
+        });
+    match built {
         Ok(conn) => Ok(Acquired::Primary(Primary { _conn: conn, activations: rx })),
         Err(zbus::Error::NameTaken) => {
             let conn = zbus::blocking::connection::Builder::session()?
