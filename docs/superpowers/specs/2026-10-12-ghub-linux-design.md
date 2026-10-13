@@ -111,9 +111,9 @@ Interface D-Bus no barramento de sessão: nome de barramento `org.ghublinux.Daem
 
 ## 6. Identidade visual
 
-- **Logo A**: selo laranja (`#fe8019`) com pinguim, nome "ghub" em sans arredondada minúscula e "LINUX" em mono pequeno.
+- **Logo** (revisado): selo laranja (`#fe8019`) com um mouse visto de cima (pílula, roda e divisória vazadas), nome "ghub" minúsculo em traços de ponta redonda e "LINUX" pequeno e espaçado. Fontes em `packaging/icons/` (`org.ghublinux.Gui.svg`, `-symbolic.svg`, `ghub-logo.svg`). Substitui o pinguim da proposta inicial.
 - Ícone do app em 16 a 128 px; ícone de bandeja **simbólico**, monocromático, em 24 px (SVG), com os 4 estados acima.
-- O pinguim e o logotipo são originais. Não usar o logo, o nome "Logitech" ou "G HUB" como marca do projeto: **"ghub" é nome provisório**, a decidir antes da primeira publicação pública.
+- O emblema e o logotipo são originais (não imitam a marca da Logitech). Não usar o logo, o nome "Logitech" ou "G HUB" como marca do projeto: **"ghub" é nome provisório**, a decidir antes da primeira publicação pública.
 
 ## 7. Permissões
 

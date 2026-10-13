@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 128" width="330" height="128">
+  <!-- ghub: emblema + marca em traços de ponta redonda (sem fontes) -->
+  <rect width="330" height="128" rx="20" fill="#1d2021"/>
+  <g transform="translate(24 24)">
+    <circle cx="40" cy="40" r="37.5" fill="#fe8019"/>
+    <path d="M23.75 28.75a16.25 16.25 0 0 1 32.5 0v22.5a16.25 16.25 0 0 1-32.5 0z" fill="#282828"/>
+    <path d="M40 23.1v10" stroke="#fe8019" stroke-width="5.6" stroke-linecap="round" fill="none"/>
+    <path d="M23.75 41.9h32.5" stroke="#fe8019" stroke-width="3.1" fill="none"/>
+  </g>
+  <g transform="translate(122 24) scale(2)" fill="none" stroke="#ebdbb2" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 17A7 7 0 1 0 16 17A7 7 0 1 0 2 17M16 10V27A7 7 0 0 1 9 34H7"/>
+    <path d="M25 0V24M25 17A7 7 0 0 1 39 17V24M45 10V17A7 7 0 0 0 59 17M59 10V24M68 0V24M68 17A7 7 0 1 1 82 17A7 7 0 1 1 68 17"/>
+    <!-- LINUX -->
+    <g stroke="#fe8019" stroke-width="1.8" transform="translate(24 31)">
+      <path d="M0 0V7H5.5M13 0V7M20 7V0L26 7V0M34 0V4A3 3 0 0 0 40 4V0M48 0L54 7M54 0L48 7"/>
+    </g>
+  </g>
+</svg>

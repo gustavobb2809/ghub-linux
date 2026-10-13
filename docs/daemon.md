@@ -200,14 +200,14 @@ O menu é reconstruído a cada evento do gerente (juntando rajadas de 150 ms) e 
 
 ### Estados do ícone
 
-Pinguim desenhado em código (22, 32 e 48 px), cor `#ebdbb2`:
+Emblema do ghub (anel + mouse visto de cima, roda e divisória vazadas) desenhado em código (22, 32 e 48 px), cor `#ebdbb2`:
 
 | Estado | Quando | Aparência |
 |---|---|---|
-| Normal | Dispositivo conectado | Pinguim. |
+| Normal | Dispositivo conectado | Emblema. |
 | Bateria baixa | Bateria ≤ 15 % e não está com carga completa | Ponto vermelho (`#fb4934`) no canto inferior direito. |
 | Carregando | Bateria carregando | Ponto verde (`#b8bb26`) no canto inferior direito. |
-| Desconectado | Nenhum dispositivo, ou o principal offline/dormindo | Pinguim esmaecido (40 % de opacidade). |
+| Desconectado | Nenhum dispositivo, ou o principal offline/dormindo | Emblema esmaecido (40 % de opacidade). |
 
 ## Notificações
 

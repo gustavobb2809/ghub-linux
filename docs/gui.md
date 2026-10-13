@@ -2,6 +2,10 @@
 
 `ghub-gui` é a janela do ghub-linux (Qt 6/QML com a lógica em Rust via `cxx-qt`). Ela não fala com o mouse: é um cliente do `ghubd` pelo D-Bus de sessão (ver `docs/daemon.md`). Verificação manual: `docs/gui-verification.md`.
 
+![ghub](../packaging/icons/ghub-logo.svg)
+
+A marca (emblema com mouse + palavra "ghub" em traços redondos) é original e independente da Logitech. A barra lateral a desenha nativamente em `qml/components/Logo.qml` (Shapes, sem imagens nem fontes); o ícone do app é `packaging/icons/org.ghublinux.Gui.svg` e o da bandeja é rasterizado pelo `ghubd`.
+
 ## Arquitetura
 
 O crate `crates/ghub-gui` tem quatro peças:
