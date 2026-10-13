@@ -1,5 +1,5 @@
 use super::{ApiError, DaemonApi};
-use ghub_ipc::{DeviceState, DeviceSummary, STATE_DISCHARGING};
+use ghub_ipc::{DeviceState, DeviceSummary, LedSetting, STATE_DISCHARGING};
 use std::sync::Mutex;
 
 pub struct FakeInner {
@@ -11,6 +11,10 @@ pub struct FakeInner {
     pub calls: Vec<String>,
     pub fail_next: Option<ApiError>,
     pub start_ok: bool,
+    pub led: LedSetting,
+    pub led_effects: Vec<String>,
+    /// Falha só a próxima gravação de LED (não atrapalha as leituras do `refresh`).
+    pub fail_next_write: Option<ApiError>,
 }
 pub struct FakeDaemon { pub inner: Mutex<FakeInner> }
 
@@ -30,6 +34,9 @@ impl FakeDaemon {
             running: true, devices: vec![sample_state()], profiles: vec!["Padrão".into()],
             active_profile: "Padrão".into(), autostart: Some(false), calls: vec![],
             fail_next: None, start_ok: true,
+            led: LedSetting { effect: "cycle".into(), color: String::new(), period_ms: 8000, intensity: 0 },
+            led_effects: ["off", "fixed", "cycle", "breathing"].map(String::from).to_vec(),
+            fail_next_write: None,
         }) }
     }
     pub fn scenario(name: &str) -> Self {
@@ -38,6 +45,7 @@ impl FakeDaemon {
             let mut i = d.inner.lock().unwrap();
             match name {
                 "stopped" => i.running = false,
+                "no-led" => i.led_effects.clear(),
                 "sleeping" => { let s = &mut i.devices[0]; s.connected = false; s.dpi_current = 0; }
                 _ => {}
             }
@@ -94,6 +102,25 @@ impl DaemonApi for FakeDaemon {
         let mut i = self.record(format!("set_polling_rate {id} {hz}"))?;
         let d = i.devices.iter_mut().find(|d| d.id == id).ok_or_else(unknown)?;
         d.polling_hz = hz;
+        Ok(())
+    }
+    // As leituras de LED não entram em `calls`: não alteram as listas exatas dos testes antigos.
+    fn led_effects(&self, _id: &str) -> Result<Vec<String>, ApiError> {
+        let i = self.inner.lock().unwrap();
+        if !i.running { return Err(ApiError::Unavailable); }
+        Ok(i.led_effects.clone())
+    }
+    fn get_led(&self, _id: &str) -> Result<LedSetting, ApiError> {
+        let i = self.inner.lock().unwrap();
+        if !i.running { return Err(ApiError::Unavailable); }
+        Ok(i.led.clone())
+    }
+    fn set_led(&self, id: &str, s: &LedSetting) -> Result<(), ApiError> {
+        let mut i = self.inner.lock().unwrap();
+        i.calls.push(format!("set_led {id} {} {} {} {}", s.effect, s.color, s.period_ms, s.intensity));
+        if !i.running { return Err(ApiError::Unavailable); }
+        if let Some(e) = i.fail_next_write.take() { return Err(e); }
+        i.led = s.clone();
         Ok(())
     }
     fn list_profiles(&self) -> Result<Vec<String>, ApiError> {

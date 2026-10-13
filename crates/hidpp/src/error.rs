@@ -16,6 +16,12 @@ pub enum HidppError {
     UnexpectedResponse(&'static str),
     #[error("argumento inválido: {0}")]
     InvalidArgument(&'static str),
+    #[error("a memória onboard está corrompida (CRC inválido)")]
+    BadChecksum,
+    #[error("a leitura de volta da memória onboard difere do que foi gravado")]
+    VerifyFailed,
+    #[error("não foi possível restaurar o setor original; use `ghubctl led restore` com a cópia de segurança")]
+    RestoreFailed,
     #[error("erro de E/S: {0}")]
     Io(String),
 }
@@ -38,5 +44,11 @@ mod tests {
             HidppError::LegacyProtocol { code: 8 }.to_string(),
             "erro HID++ 1.0 0x08"
         );
+    }
+
+    #[test]
+    fn onboard_errors_are_readable() {
+        assert!(HidppError::BadChecksum.to_string().contains("CRC"));
+        assert!(HidppError::VerifyFailed.to_string().contains("leitura de volta"));
     }
 }

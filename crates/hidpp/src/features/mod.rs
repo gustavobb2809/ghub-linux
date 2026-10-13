@@ -1,6 +1,8 @@
 pub mod battery;
 pub mod device_name;
 pub mod dpi;
+pub mod onboard;
+pub mod onboard_fake;
 pub mod report_rate;
 
 /// Nome legível de features HID++ conhecidas (para diagnóstico).

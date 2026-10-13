@@ -40,15 +40,16 @@ Escolher o efeito e a cor do LED do G703 LS pela aba Iluminação e tê-los apli
 ## 5. `ghubd` e D-Bus
 
 - `Mouse` ganha `led() -> Result<Led, ManagerError>` e `set_led(Led)`. Backend real chama o módulo; `FakeMouse` guarda em memória. Sem `0x8100` anunciado: "não suportado".
-- `DeviceState` ganha `led: Option<LedInfo>` (efeito atual e efeitos suportados); `None` quando o mouse não suporta. A GUI esconde a aba nesse caso.
+- O D-Bus ganha `LedEffects(id) -> as` (efeitos suportados; lista vazia = sem suporte e a GUI esconde a aba). `DeviceState` **não** muda, para não quebrar o contrato estável.
 - `Command::GetLed { id, reply }` e `Command::SetLed { id, led, reply }`, tratados na thread gerente como `SetPolling`.
 - D-Bus (`org.ghublinux.Daemon1`): `GetLed(s id) -> (s effect, s color, u period_ms, u intensity)` e `SetLed(s id, s effect, s color, u period_ms, u intensity)`; `InvalidArgs` para efeito não suportado ou cor inválida; `DeviceChanged(id)` após gravar. Referência final em `docs/daemon.md`.
 - A gravação é lenta; medir se cabe no timeout de 5 s do `Failed` e, se não couber, ampliar o timeout só dessa chamada.
-- Falha de gravação: notificação pelo caminho existente (`org.freedesktop.Notifications`) e mensagem na GUI; a cópia de segurança permanece em disco.
+- Falha de gravação: a mensagem aparece na GUI (Toast), pois a gravação só parte da GUI aberta; não há notificação do sistema. A cópia de segurança permanece em disco. `SetLed` tem timeout de 15 s no serviço (as demais chamadas, 5 s).
 
 ## 6. GUI — aba Iluminação
 
 A partir do mock `Iluminacao.dc.html`:
+- A página Iluminação é o índice 3 da pilha (depois de Configurações, índice 2); a aba aparece na 3ª posição da barra.
 - Prévia do mouse à esquerda (efeito e cor antes de aplicar; animada para ciclo e respiração); Efeito, Cor e Intensidade à direita; botão **Aplicar**.
 - Efeito: Fixo, Respiração, Ciclo de cores, Desligado, limitado ao que o mouse suporta.
 - Cor (paleta Gruvbox + hex) só em Fixo e Respiração. Intensidade e período só em Respiração e Ciclo (o Fixo não tem campo de brilho).

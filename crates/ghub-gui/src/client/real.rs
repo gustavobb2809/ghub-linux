@@ -7,7 +7,7 @@
 
 use super::controller::{Event, Msg};
 use super::{ApiError, DaemonApi};
-use ghub_ipc::{DaemonProxyBlocking, DeviceState, DeviceSummary, BUS_NAME, INTERFACE};
+use ghub_ipc::{DaemonProxyBlocking, DeviceState, DeviceSummary, LedSetting, BUS_NAME, INTERFACE};
 use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
@@ -188,6 +188,15 @@ impl DaemonApi for RealDaemon {
     }
     fn set_polling_rate(&self, id: &str, hz: u32) -> Result<(), ApiError> {
         self.call(|p| p.set_polling_rate(id, hz))
+    }
+    fn led_effects(&self, id: &str) -> Result<Vec<String>, ApiError> {
+        self.call(|p| p.led_effects(id))
+    }
+    fn get_led(&self, id: &str) -> Result<LedSetting, ApiError> {
+        self.call(|p| p.get_led(id))
+    }
+    fn set_led(&self, id: &str, s: &LedSetting) -> Result<(), ApiError> {
+        self.call(|p| p.set_led(id, &s.effect, &s.color, s.period_ms, s.intensity))
     }
     fn list_profiles(&self) -> Result<Vec<String>, ApiError> {
         self.call(|p| p.list_profiles())

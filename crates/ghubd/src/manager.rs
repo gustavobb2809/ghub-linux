@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use ghub_ipc::{DeviceState, DeviceSummary, BATTERY_UNKNOWN, STATE_UNKNOWN};
 use hidpp::features::dpi::DpiSupport;
+use hidpp::features::onboard::Led;
 
 use crate::backend::Backend;
 use crate::battery_sysfs::{BatteryInfo, ChargeStatus};
@@ -58,6 +59,9 @@ pub enum Command {
     SetDpiLevels { id: String, levels: Vec<u16>, active: usize, reply: Sender<Result<(), ManagerError>> },
     SetActiveLevel { id: String, active: usize, reply: Sender<Result<(), ManagerError>> },
     SetPolling { id: String, hz: u16, reply: Sender<Result<(), ManagerError>> },
+    LedEffects { id: String, reply: Sender<Result<Vec<String>, ManagerError>> },
+    GetLed { id: String, reply: Sender<Result<Led, ManagerError>> },
+    SetLed { id: String, led: Led, reply: Sender<Result<(), ManagerError>> },
     ListProfiles(Sender<Vec<String>>),
     ActiveProfile(Sender<String>),
     ActivateProfile { name: String, reply: Sender<Result<(), ManagerError>> },
@@ -275,6 +279,43 @@ impl<B: Backend> Manager<B> {
         candidate.polling_hz = hz;
         candidate.check_shape()?;
         self.commit_profile_change(idx, candidate)
+    }
+
+    /// Efeitos de LED do dispositivo; vazio sem suporte (ou offline).
+    pub fn led_effects(&self, id: &str) -> Result<Vec<String>, ManagerError> {
+        let idx = self.find(id)?;
+        Ok(self.devices[idx]
+            .caps
+            .as_ref()
+            .map(|c| c.led.iter().map(|k| k.name().to_string()).collect())
+            .unwrap_or_default())
+    }
+
+    pub fn led(&mut self, id: &str) -> Result<Led, ManagerError> {
+        let idx = self.find(id)?;
+        self.online_caps(idx)?;
+        let mouse = self.devices[idx].mouse.as_mut().expect("online");
+        mouse.led().map_err(|e| ManagerError::Device(e.to_string()))
+    }
+
+    pub fn set_led(&mut self, id: &str, led: Led) -> Result<(), ManagerError> {
+        let idx = self.find(id)?;
+        let caps = self.online_caps(idx)?;
+        if !caps.led.contains(&led.kind()) {
+            return Err(ManagerError::Invalid(format!(
+                "o efeito \"{}\" não é suportado por este dispositivo",
+                led.kind().name()
+            )));
+        }
+        let mouse = self.devices[idx].mouse.as_mut().expect("online");
+        mouse.set_led(&led).map_err(|e| ManagerError::Device(e.to_string()))?;
+        // Recarregar o perfil onboard devolve ao mouse o DPI e o polling gravados nele; reaplica
+        // os do perfil do daemon (só escreve o que difere).
+        if let Err(e) = self.apply_to(idx) {
+            eprintln!("ghubd: {id}: falha ao reaplicar o perfil depois do LED: {e}");
+        }
+        self.emit(Event::DeviceChanged(id.to_string()));
+        Ok(())
     }
 
     pub fn activate_profile(&mut self, name: &str) -> Result<(), ManagerError> {
@@ -523,6 +564,15 @@ impl<B: Backend> Manager<B> {
             }
             Command::SetPolling { id, hz, reply } => {
                 let _ = reply.send(self.set_polling(&id, hz));
+            }
+            Command::LedEffects { id, reply } => {
+                let _ = reply.send(self.led_effects(&id));
+            }
+            Command::GetLed { id, reply } => {
+                let _ = reply.send(self.led(&id));
+            }
+            Command::SetLed { id, led, reply } => {
+                let _ = reply.send(self.set_led(&id, led));
             }
             Command::ListProfiles(r) => {
                 let _ = r.send(self.list_profiles());
@@ -1005,5 +1055,72 @@ mod tests {
             .filter(|e| *e == Event::DeviceChanged("dev-1".into()))
             .count();
         assert_eq!(changed, 1);
+    }
+
+    #[test]
+    fn led_effects_lists_what_the_device_supports() {
+        let (mut m, _rx, _mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        assert_eq!(m.led_effects("dev-1").unwrap(), vec!["off", "fixed", "cycle", "breathing"]);
+        assert!(matches!(m.led_effects("nope"), Err(ManagerError::NotFound(_))));
+    }
+
+    #[test]
+    fn led_effects_is_empty_without_support() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        mouse.state().caps.led.clear();
+        m.rescan();
+        assert_eq!(m.led_effects("dev-1").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn set_led_writes_emits_and_reads_back() {
+        let (mut m, rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        drain(&rx);
+        let red = Led::Fixed { rgb: [255, 0, 0] };
+        m.set_led("dev-1", red).unwrap();
+        assert_eq!(mouse.state().led_sets, vec![red]);
+        assert_eq!(m.led("dev-1").unwrap(), red);
+        assert!(drain(&rx).contains(&Event::DeviceChanged("dev-1".into())));
+    }
+
+    #[test]
+    fn set_led_rejects_an_effect_the_device_does_not_list_without_writing() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        mouse.state().caps.led = vec![hidpp::features::onboard::LedKind::Fixed];
+        m.rescan();
+        assert!(matches!(m.set_led("dev-1", Led::Off), Err(ManagerError::Invalid(_))));
+        assert!(mouse.state().led_sets.is_empty());
+    }
+
+    #[test]
+    fn set_led_on_an_offline_device_is_offline_and_does_not_write() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        mouse.state().online = false;
+        m.tick();
+        assert!(matches!(m.set_led("dev-1", Led::Off), Err(ManagerError::Offline(_))));
+        assert!(mouse.state().led_sets.is_empty());
+    }
+
+    #[test]
+    fn set_led_reports_a_failed_write_as_a_device_error() {
+        let (mut m, rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        drain(&rx);
+        mouse.state().fail_writes = true;
+        assert!(matches!(m.set_led("dev-1", Led::Off), Err(ManagerError::Device(_))));
+        assert!(drain(&rx).is_empty(), "falha não emite DeviceChanged");
+    }
+
+    #[test]
+    fn set_led_reapplies_the_profile_dpi_after_the_onboard_reload() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        assert_eq!(mouse.state().dpi, 1600);
+        mouse.state().dpi_after_led = Some(800); // o reload do perfil onboard devolve o DPI dele
+        m.set_led("dev-1", Led::Off).unwrap();
+        assert_eq!(mouse.state().dpi, 1600, "o DPI do perfil do daemon volta a valer");
     }
 }

@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use ghub_ipc::{DeviceState, DeviceSummary};
 use hidpp::features::dpi::DpiSupport;
+use hidpp::features::onboard::{Led, LedKind};
 use hidpp::HidppError;
 
 use crate::backend::{Backend, Found};
@@ -21,6 +22,10 @@ pub struct FakeState {
     pub caps: Capabilities,
     pub dpi_sets: Vec<u16>,
     pub polling_sets: Vec<u16>,
+    pub led: Led,
+    pub led_sets: Vec<Led>,
+    /// Recarregar o perfil onboard (set_led) devolve o DPI a este valor (simula o reset real).
+    pub dpi_after_led: Option<u16>,
     /// Com o mouse online, leituras falham.
     pub fail_reads: bool,
     /// Com o mouse online, escritas falham (e não são registradas).
@@ -43,9 +48,13 @@ impl FakeMouse {
             caps: Capabilities {
                 dpi: DpiSupport::Range { min: 100, max: 25600, step: 50 },
                 polling_hz: vec![125, 250, 500, 1000],
+                led: LedKind::ALL.to_vec(),
             },
             dpi_sets: Vec::new(),
             polling_sets: Vec::new(),
+            led: Led::Cycle { period_ms: 8000, intensity: 0 },
+            led_sets: Vec::new(),
+            dpi_after_led: None,
             fail_reads: false,
             fail_writes: false,
             fail_ping: false,
@@ -94,6 +103,24 @@ impl Mouse for FakeMouse {
         }
         s.polling = hz;
         s.polling_sets.push(hz);
+        Ok(())
+    }
+
+    fn led(&mut self) -> MouseResult<Led> {
+        let s = self.state();
+        if s.online && !s.fail_reads { Ok(s.led) } else { Err(HidppError::Timeout) }
+    }
+
+    fn set_led(&mut self, led: &Led) -> MouseResult<()> {
+        let mut s = self.state();
+        if !s.online || s.fail_writes {
+            return Err(HidppError::Timeout);
+        }
+        s.led = *led;
+        s.led_sets.push(*led);
+        if let Some(dpi) = s.dpi_after_led {
+            s.dpi = dpi;
+        }
         Ok(())
     }
 

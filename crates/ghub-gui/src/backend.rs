@@ -37,6 +37,13 @@ pub mod qobject {
         #[qproperty(QString, devices_json, cxx_name = "devicesJson")]
         #[qproperty(bool, show_device_selector, cxx_name = "showDeviceSelector")]
         #[qproperty(QString, selected_device, cxx_name = "selectedDevice")]
+        #[qproperty(bool, led_supported, cxx_name = "ledSupported")]
+        #[qproperty(QString, led_effects_json, cxx_name = "ledEffectsJson")]
+        #[qproperty(QString, led_effect, cxx_name = "ledEffect")]
+        #[qproperty(QString, led_color, cxx_name = "ledColor")]
+        #[qproperty(i32, led_period_ms, cxx_name = "ledPeriodMs")]
+        #[qproperty(i32, led_intensity, cxx_name = "ledIntensity")]
+        #[qproperty(bool, led_busy, cxx_name = "ledBusy")]
         #[qproperty(QString, last_error, cxx_name = "lastError")]
         type Backend = super::BackendRust;
 
@@ -60,6 +67,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setPolling"]
         fn set_polling(self: Pin<&mut Backend>, hz: i32);
+        #[qinvokable]
+        #[cxx_name = "applyLed"]
+        fn apply_led(self: Pin<&mut Backend>, effect: QString, color: QString, period_ms: i32, intensity: i32) -> QString;
         #[qinvokable]
         #[cxx_name = "applyProfileToDevice"]
         fn apply_profile_to_device(self: Pin<&mut Backend>);
@@ -155,6 +165,13 @@ pub struct BackendRust {
     devices_json: QString,
     show_device_selector: bool,
     selected_device: QString,
+    led_supported: bool,
+    led_effects_json: QString,
+    led_effect: QString,
+    led_color: QString,
+    led_period_ms: i32,
+    led_intensity: i32,
+    led_busy: bool,
     last_error: QString,
 }
 
@@ -190,6 +207,13 @@ impl Default for BackendRust {
             devices_json: QString::from(p.devices_json.as_str()),
             show_device_selector: p.show_device_selector,
             selected_device: QString::from(p.selected_device.as_str()),
+            led_supported: p.led_supported,
+            led_effects_json: QString::from(p.led_effects_json.as_str()),
+            led_effect: QString::from(p.led_effect.as_str()),
+            led_color: QString::from(p.led_color.as_str()),
+            led_period_ms: p.led_period_ms,
+            led_intensity: p.led_intensity,
+            led_busy: false,
             last_error: QString::default(),
         }
     }
@@ -243,8 +267,15 @@ impl qobject::Backend {
         self.as_mut().set_devices_json(QString::from(p.devices_json.as_str()));
         self.as_mut().set_show_device_selector(p.show_device_selector);
         self.as_mut().set_selected_device(QString::from(p.selected_device.as_str()));
+        self.as_mut().set_led_supported(p.led_supported);
+        self.as_mut().set_led_effects_json(QString::from(p.led_effects_json.as_str()));
+        self.as_mut().set_led_effect(QString::from(p.led_effect.as_str()));
+        self.as_mut().set_led_color(QString::from(p.led_color.as_str()));
+        self.as_mut().set_led_period_ms(p.led_period_ms);
+        self.as_mut().set_led_intensity(p.led_intensity);
             }
             Update::Error(t) => self.as_mut().set_last_error(QString::from(t.as_str())),
+            Update::LedDone => self.as_mut().set_led_busy(false),
         }
     }
 
@@ -364,6 +395,21 @@ impl qobject::Backend {
     fn set_polling(self: Pin<&mut Self>, hz: i32) {
         if let Ok(hz) = u32::try_from(hz) {
             self.send(Command::SetPolling(hz));
+        }
+    }
+
+    fn apply_led(mut self: Pin<&mut Self>, effect: QString, color: QString, period_ms: i32, intensity: i32) -> QString {
+        let supported = self.rust().view.device.as_ref()
+            .and_then(|d| d.led.as_ref().map(|l| l.effects.clone()))
+            .unwrap_or_default();
+        match crate::model::led::validate(&effect.to_string(), &color.to_string(), period_ms, intensity, &supported) {
+            Ok(_) if self.rust().tx.is_none() => QString::from("Sem conexão com o serviço ghubd."),
+            Ok(setting) => {
+                self.as_mut().set_led_busy(true);
+                self.send(Command::SetLed(setting));
+                QString::default()
+            }
+            Err(e) => QString::from(e.as_str()),
         }
     }
 

@@ -26,3 +26,15 @@ Trocar as 4 entradas de LED do perfil 1 por `01 ff 00 00 00 00 00 00 00 00 00` (
 4. Reler e comparar; em caso de diferença, regravar o backup.
 5. `fn3 [00 01]` (perfil atual) recarrega o perfil e o LED muda na hora, sem reconectar.
 Não foi preciso trocar o modo (continua onboard).
+
+## Validação dos efeitos no hardware (2026-10-13, `ghubctl led set` e GUI)
+Gravados no perfil 1 e confirmados a olho pelo usuário:
+- `fixed #00FF00` → verde fixo.
+- `breathing #FF0000`, período 4000 ms, forma de onda `0x00`, intensidade 0 → vermelho respirando. `BREATHING_WAVEFORM = 0x00` fica como está.
+- `off` → LED apagado (modo `0x00`).
+- `fixed #FE8019` pelo D-Bus (`SetLed`) → laranja fixo; gravação em ~0,7 s. A GUI gravou `cycle` 6500 ms.
+Todos os quatro efeitos de `LedKind::ALL` funcionam; nada saiu da lista. O daemon salva uma cópia do setor 1 por sessão em `~/.local/share/ghub-linux/onboard-backup/`.
+
+## Recuperação
+`set_led` tenta devolver o setor original (e confere lendo de volta) quando qualquer passo da gravação falha; se nem isso funcionar devolve `RestoreFailed`. Para regravar uma cópia de segurança à mão (com o `ghubd` parado):
+`ghubctl led restore ~/.local/share/ghub-linux/onboard-backup/<arquivo>.bin --yes` (o setor sai do nome `-sectorHHHH-`; a cópia precisa ter CRC válido).

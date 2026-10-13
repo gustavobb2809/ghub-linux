@@ -12,12 +12,17 @@ impl DaemonStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceChoice { pub id: String, pub name: String }
 
+/// LED do perfil onboard ativo: efeitos que o mouse aceita e o que está gravado.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedView { pub effects: Vec<String>, pub current: ghub_ipc::LedSetting }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceView {
     pub id: String, pub name: String, pub connected: bool,
     pub dpi_current: u32, pub dpi_levels: Vec<u32>, pub active_level: u32,
     pub range: DpiRange, pub polling_hz: u32, pub polling_options: Vec<u32>,
     pub battery_percent: i32, pub battery_state: String,
+    pub led: Option<LedView>,
 }
 
 impl DeviceView {
@@ -28,8 +33,10 @@ impl DeviceView {
             range: DpiRange::from_state(s), polling_hz: s.polling_hz,
             polling_options: s.polling_supported.clone(),
             battery_percent: s.battery_percent, battery_state: s.battery_state.clone(),
+            led: None,
         }
     }
+    pub fn with_led(mut self, led: Option<LedView>) -> Self { self.led = led; self }
     pub fn levels(&self) -> Levels { Levels { levels: self.dpi_levels.clone(), active: self.active_level } }
     pub fn with_levels(mut self, l: Levels) -> Self { self.dpi_levels = l.levels; self.active_level = l.active; self }
     /// O DPI lido no mouse difere do nível ativo do perfil (ex.: botão de DPI).

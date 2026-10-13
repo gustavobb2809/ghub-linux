@@ -121,6 +121,26 @@ fn counter_proof_rebind_fails_when_mouse_is_asleep() {
 }
 
 #[test]
+fn lighting_page_reflects_and_applies_the_led() {
+    assert_eq!(run("lighting", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_lighting_fails_when_the_mouse_has_no_led() {
+    assert_eq!(run("lighting", Some("no-led")), 7);
+}
+
+#[test]
+fn lighting_tab_is_hidden_when_the_mouse_has_no_led() {
+    assert_eq!(run("lighting-hidden", Some("no-led")), 0);
+}
+
+#[test]
+fn counter_proof_lighting_hidden_fails_when_the_mouse_has_a_led() {
+    assert_eq!(run("lighting-hidden", Some("running")), 7);
+}
+
+#[test]
 fn qml_load_failure_exits_with_code_1_instead_of_hanging() {
     assert_eq!(run("load-failure", Some("running")), 1);
 }
@@ -192,7 +212,7 @@ fn every_page_renders_to_a_png_at_both_sizes() {
     std::fs::create_dir_all(&dir).unwrap();
     assert_eq!(shots("running", Some(&dir)), 0);
     for size in ["1280x800", "900x600"] {
-        for page in ["visao-geral", "sensibilidade", "configuracoes", "menu-perfil"] {
+        for page in ["visao-geral", "sensibilidade", "configuracoes", "iluminacao", "menu-perfil"] {
             let f = dir.join(format!("running-{page}-{size}.png"));
             assert!(std::fs::metadata(&f).map(|m| m.len() > 1000).unwrap_or(false), "faltou {f:?}");
         }

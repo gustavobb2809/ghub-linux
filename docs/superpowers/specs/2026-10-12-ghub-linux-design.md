@@ -105,7 +105,7 @@ Interface D-Bus no barramento de sessão: nome de barramento `org.ghublinux.Daem
 ### 5.4 `ghub-gui`
 
 - App Qt6/QML via `cxx-qt`, comunicando só com `ghubd` por D-Bus.
-- Telas da v1 conforme os mocks: Visão geral, Sensibilidade, Configurações. Iluminação e Botões entram como abas desabilitadas com selo de versão até as fases v1.1 e v1.2.
+- Telas da v1 conforme os mocks: Visão geral, Sensibilidade, Configurações. Iluminação e Botões entram como abas desabilitadas com selo de versão até as fases v1.1 e v1.2; a Iluminação foi habilitada na v1.1 (`2026-10-13-iluminacao-v1.1-design.md`) e some quando o mouse não suporta LED.
 - Tema Gruvbox escuro; tipografia IBM Plex Sans e JetBrains Mono.
 - Se o daemon não estiver rodando, a GUI oferece iniciá-lo.
 
