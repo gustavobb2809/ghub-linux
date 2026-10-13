@@ -27,13 +27,13 @@ QtObject {
     property int shotPhase: 0
     property int saved: 0
     property int shotTicks: 0
-    readonly property var pageNames: ["visao-geral", "sensibilidade", "configuracoes"]
+    readonly property var pageNames: ["visao-geral", "sensibilidade", "configuracoes", "iluminacao"]
 
     function buildPlan() {
         const w = root.win, p = []
         for (const sz of [[1280, 800], [900, 600]]) {
             if (w.disconnectedVisible) { p.push({ sz: sz, page: 0, menu: false, name: "desconectado" }); continue }
-            for (let i = 0; i < 3; i++) p.push({ sz: sz, page: i, menu: false, name: root.pageNames[i] })
+            for (let i = 0; i < 4; i++) p.push({ sz: sz, page: i, menu: false, name: root.pageNames[i] })
             p.push({ sz: sz, page: 0, menu: true, name: "menu-perfil" })
         }
         return p
@@ -83,8 +83,8 @@ QtObject {
             return b.hasDevice && !b.connected
         case "pages": {
             const w = root.win
-            if (w.pageCount !== 3 || w.disconnectedVisible) return false
-            for (let i = 0; i < 3; i++) {
+            if (w.pageCount !== 4 || w.disconnectedVisible) return false
+            for (let i = 0; i < 4; i++) {
                 w.goTo(i)
                 if (w.currentIndex !== i) return false
             }
@@ -157,6 +157,21 @@ QtObject {
             w.sensitivityEdit(0, "1000")
             return w.sensitivityCommits() === 2 && b.dpiLevelsJson.startsWith("[1000,")
         }
+        case "lighting": {
+            // aba habilitada, formulario reflete o LED do daemon e Aplicar grava
+            const w = root.win
+            if (!b.hasDevice || !b.ledSupported || w.pageCount !== 4) return false
+            w.goTo(3)
+            if (w.currentIndex !== 3 || !w.navTab(3).enabled) return false
+            if (b.ledEffect !== "cycle" || w.lightingApplyEnabled()) return false
+            w.lightingSelect("fixed")
+            if (!w.lightingApplyEnabled()) return false
+            w.lightingApply()
+            return b.ledBusy === true || b.ledEffect === "fixed"
+        }
+        case "lighting-hidden":
+            // sem suporte no mouse: a aba some
+            return b.hasDevice && !b.ledSupported && !root.win.navTab(3).visible
         case "edit":
             // otimista: a propriedade muda na hora, sem esperar o daemon
             if (!b.hasDevice) return false

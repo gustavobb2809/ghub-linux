@@ -13,7 +13,7 @@ ApplicationWindow {
 
     property alias backend: backend
     property int currentIndex: 0
-    readonly property int pageCount: 3
+    readonly property int pageCount: 4
     readonly property bool disconnectedVisible: backend.daemonState === "stopped"
     readonly property bool connecting: backend.daemonState === "connecting"
     readonly property bool pagesVisible: !disconnectedVisible && !connecting
@@ -27,7 +27,11 @@ ApplicationWindow {
 
     function goTo(i) { if (i >= 0 && i < pageCount) currentIndex = i }
     function sensitivityLevelCount() { return sensitivity.levelCount }
-    function navTab(i) { return [nav0, nav1, nav2][i] }
+    function navTab(i) { return [nav0, nav1, nav2, nav3][i] }
+    function lightingApplyEnabled() { return lighting.applyEnabled }
+    function lightingSelect(e) { lighting.select(e) }
+    function lightingApply() { lighting.apply() }
+    function lightingBusyText() { return lighting.busyText() }
     function layoutReport() { return layout.report() }
     function sensitivityMinTrack() { return sensitivity.minTrackWidth() }
     function openProfileMenu() { if (pill.visible) profileMenu.open() }
@@ -46,6 +50,12 @@ ApplicationWindow {
         id: backend
         onActivateRequested: { if (win.visibility === Window.Minimized) win.showNormal(); win.show(); win.raise(); win.requestActivate() }
         Component.onCompleted: backend.start()
+    }
+
+    // Sem suporte a LED a aba some; se estava nela, volta para a Visao geral.
+    Connections {
+        target: backend
+        function onLedSupportedChanged() { if (!backend.ledSupported && win.currentIndex === 3) win.goTo(0) }
     }
 
     Rectangle {
@@ -281,7 +291,14 @@ ApplicationWindow {
                         checked: win.currentIndex === 1
                         onClicked: win.goTo(1)
                     }
-                    NavTab { text: "Iluminação"; enabled: false; badge: "v1.1" }
+                    NavTab {
+                        id: nav3
+                        text: "Iluminação"
+                        visible: backend.ledSupported
+                        enabled: win.pagesVisible
+                        checked: win.currentIndex === 3
+                        onClicked: win.goTo(3)
+                    }
                     NavTab { text: "Botões"; enabled: false; badge: "v1.2" }
                 }
             }
@@ -311,6 +328,7 @@ ApplicationWindow {
                     Overview { id: overview; backend: win.backend }
                     Sensitivity { id: sensitivity; backend: win.backend }
                     Settings { id: settings; backend: win.backend }
+                    Lighting { id: lighting; backend: win.backend }
                 }
 
                 Toast {
