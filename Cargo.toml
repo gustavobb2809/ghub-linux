@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["crates/hidpp", "crates/ghubctl", "crates/ghub-ipc", "crates/ghubd"]
+members = ["crates/hidpp", "crates/ghubctl", "crates/ghub-ipc", "crates/ghubd", "crates/ghub-gui"]
+default-members = ["crates/hidpp", "crates/ghubctl", "crates/ghub-ipc", "crates/ghubd"]
 
 [workspace.package]
 version = "0.1.0"
