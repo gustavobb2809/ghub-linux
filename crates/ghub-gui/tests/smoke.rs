@@ -165,3 +165,50 @@ fn bare_smoke_flag_exits_2() {
 fn backendless_smoke_runs_without_fake() {
     assert_eq!(run("theme", None), 0);
 }
+
+#[test]
+fn layout_holds_at_minimum_window_size() {
+    assert_eq!(run("layout", Some("running")), 0);
+}
+
+#[test]
+fn counter_proof_layout_fails_when_daemon_is_stopped() {
+    assert_eq!(run("layout", Some("stopped")), 7);
+}
+
+fn shots(scenario: &str, dir: Option<&std::path::Path>) -> i32 {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_ghub-gui"));
+    c.args(["--smoke", "shots", "--fake", scenario]).env("QT_QPA_PLATFORM", "offscreen");
+    if let Some(d) = dir {
+        c.arg("--shots").arg(d);
+    }
+    c.status().expect("ghub-gui deve iniciar").code().unwrap_or(-1)
+}
+
+#[test]
+fn every_page_renders_to_a_png_at_both_sizes() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("shots-running");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    assert_eq!(shots("running", Some(&dir)), 0);
+    for size in ["1280x800", "900x600"] {
+        for page in ["visao-geral", "sensibilidade", "configuracoes", "menu-perfil"] {
+            let f = dir.join(format!("running-{page}-{size}.png"));
+            assert!(std::fs::metadata(&f).map(|m| m.len() > 1000).unwrap_or(false), "faltou {f:?}");
+        }
+    }
+}
+
+#[test]
+fn disconnected_shell_renders_when_daemon_is_stopped() {
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("shots-stopped");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    assert_eq!(shots("stopped", Some(&dir)), 0);
+    assert!(dir.join("stopped-desconectado-900x600.png").exists());
+}
+
+#[test]
+fn counter_proof_shots_fail_without_a_target_directory() {
+    assert_eq!(shots("running", None), 7);
+}

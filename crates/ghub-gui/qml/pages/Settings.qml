@@ -10,106 +10,154 @@ Item {
     property string confirming: ""
     property string createError: ""
 
-    ScrollView {
-        id: scroll
+    Flickable {
+        id: flick
         anchors.fill: parent
-        contentWidth: availableWidth
+        contentWidth: width
+        contentHeight: grid.implicitHeight + 2 * Theme.pad
         clip: true
-        ColumnLayout {
-            width: scroll.availableWidth - 2 * Theme.gap
-            x: Theme.gap
-            y: Theme.gap
-            spacing: Theme.gap
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { }
+
+        GridLayout {
+            id: grid
+            x: Theme.pad; y: Theme.pad
+            width: flick.width - 2 * Theme.pad
+            columns: 2
+            columnSpacing: Theme.gap
+            rowSpacing: Theme.gap
 
             Card {
                 Layout.fillWidth: true
-                title: "Perfis"
+                Layout.preferredWidth: 100
+                Layout.alignment: Qt.AlignTop
+                padH: 24; padV: 22
+                heading: "Serviço em segundo plano"
+                subtitle: "O ghubd aplica seus perfis assim que o mouse conecta, mesmo com a janela fechada."
+                SettingRow {
+                    text: "Estado"
+                    note: "serviço de usuário do systemd"
+                    Tag {
+                        text: page.backend.daemonState === "running" ? "Ativo"
+                              : (page.backend.daemonState === "stopped" ? "Parado" : "Conectando")
+                        fontSize: 12
+                        tint: page.backend.daemonState === "running" ? Theme.good
+                              : (page.backend.daemonState === "stopped" ? Theme.bad : Theme.muted)
+                        edge: page.backend.daemonState === "running" ? Theme.goodDark
+                              : (page.backend.daemonState === "stopped" ? Theme.bad : Theme.hi)
+                    }
+                }
+                SettingRow {
+                    text: "Iniciar com a sessão"
+                    note: page.backend.autostartKnown ? "ghubd.service" : "Serviço do systemd não encontrado"
+                    Toggle {
+                        visible: page.backend.autostartKnown
+                        checked: page.backend.autostartEnabled
+                        onToggled: {
+                            page.backend.setAutostart(checked)
+                            // o clique quebra o binding; reafirma para seguir o backend (falha => volta)
+                            checked = Qt.binding(() => page.backend.autostartEnabled)
+                        }
+                    }
+                }
+                SettingRow {
+                    visible: page.backend.daemonState === "stopped"
+                    text: "Iniciar serviço"
+                    note: "systemctl --user start ghubd"
+                    PillButton { text: "Iniciar serviço"; onClicked: page.backend.startDaemon() }
+                }
+            }
+
+            Card {
+                Layout.fillWidth: true
+                Layout.preferredWidth: 100
+                Layout.alignment: Qt.AlignTop
+                padH: 24; padV: 22
+                heading: "Perfis"
+                subtitle: "Toque em um perfil para ativá-lo. O ativo não pode ser apagado."
                 Repeater {
                     model: page.profiles
-                    delegate: Rectangle {
+                    delegate: SettingRow {
                         id: prow
                         required property string modelData
                         readonly property bool active: modelData === page.backend.activeProfile
                         readonly property bool canDelete: page.profiles.length > 1 && !active
                         readonly property bool asking: canDelete && page.confirming === modelData
                         onActiveChanged: if (active) page.confirming = ""
-                        Layout.fillWidth: true
-                        implicitHeight: 40
-                        radius: 8
-                        color: active ? Theme.cardHi : (rowArea.containsMouse ? Theme.bgSoft : "transparent")
-                        MouseArea {
-                            id: rowArea
-                            anchors.fill: parent
-                            hoverEnabled: true
+                        text: modelData
+                        Tag {
+                            visible: prow.active
+                            text: "ativo"
+                            fontSize: 12
+                            tint: Theme.good
+                            edge: Theme.goodDark
+                        }
+                        Text {
+                            visible: prow.asking
+                            text: "Apagar?"
+                            color: Theme.bad
+                            font.family: Theme.ui
+                            font.pixelSize: 13
+                        }
+                        PillButton {
+                            visible: prow.asking
+                            implicitHeight: 32
+                            text: "Sim"
+                            onClicked: { page.confirming = ""; page.backend.deleteProfile(prow.modelData) }
+                        }
+                        PillButton {
+                            visible: prow.asking
+                            implicitHeight: 32
+                            text: "Não"
+                            onClicked: page.confirming = ""
+                        }
+                        PillButton {
+                            visible: !prow.active && !prow.asking
+                            implicitHeight: 32
+                            text: "Ativar"
                             onClicked: { page.confirming = ""; page.backend.activateProfile(prow.modelData) }
                         }
-                        RowLayout {
-                            anchors { fill: parent; leftMargin: 12; rightMargin: 8 }
-                            spacing: 10
-                            Text {
-                                Layout.fillWidth: true
-                                text: prow.modelData
-                                elide: Text.ElideRight
-                                color: Theme.fg
-                                font.family: Theme.uiFonts[0]
-                                font.pixelSize: 14
-                            }
-                            Text {
-                                visible: prow.active
-                                text: "ativo"
-                                color: Theme.accent
-                                font.family: Theme.uiFonts[0]
-                                font.pixelSize: 12
-                            }
-                            Text {
-                                visible: prow.asking
-                                text: "Apagar?"
-                                color: Theme.bad
-                                font.family: Theme.uiFonts[0]
-                                font.pixelSize: 13
-                            }
-                            PillButton {
-                                visible: prow.asking
-                                text: "Sim"
-                                onClicked: { page.confirming = ""; page.backend.deleteProfile(prow.modelData) }
-                            }
-                            PillButton {
-                                visible: prow.asking
-                                text: "Não"
-                                onClicked: page.confirming = ""
-                            }
-                            PillButton {
-                                visible: prow.canDelete && !prow.asking
-                                text: "Apagar"
-                                onClicked: page.confirming = prow.modelData
-                            }
+                        PillButton {
+                            visible: prow.canDelete && !prow.asking
+                            implicitHeight: 32
+                            text: "Apagar"
+                            onClicked: page.confirming = prow.modelData
                         }
                     }
                 }
-                RowLayout {
-                    spacing: 10
-                    TextField {
-                        id: nameField
-                        Layout.fillWidth: true
-                        placeholderText: "Nome do novo perfil"
-                        color: Theme.fg
-                        placeholderTextColor: Theme.fgDim
-                        font.family: Theme.uiFonts[0]
-                        font.pixelSize: 14
-                        background: Rectangle {
-                            radius: 6
-                            color: Theme.bgSoft
-                            border.color: nameField.activeFocus ? Theme.accent : Theme.border
+                Item {
+                    Layout.fillWidth: true
+                    implicitHeight: createRow.implicitHeight + 25
+                    Rectangle { anchors { left: parent.left; right: parent.right; top: parent.top } height: 1; color: Theme.line }
+                    RowLayout {
+                        id: createRow
+                        anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; verticalCenterOffset: 0.5 }
+                        spacing: 10
+                        TextField {
+                            id: nameField
+                            Layout.fillWidth: true
+                            placeholderText: "Nome do novo perfil"
+                            color: Theme.fg
+                            placeholderTextColor: Theme.muted
+                            font.family: Theme.ui
+                            font.pixelSize: 13
+                            leftPadding: 10; rightPadding: 10; topPadding: 7; bottomPadding: 7
+                            background: Rectangle {
+                                radius: 8
+                                color: Theme.bg
+                                border.color: nameField.activeFocus ? Theme.yellow : Theme.hi
+                            }
+                            onAccepted: create.clicked()
                         }
-                        onAccepted: create.clicked()
-                    }
-                    PillButton {
-                        id: create
-                        text: "Criar perfil"
-                        onClicked: {
-                            const err = page.backend.createProfile(nameField.text)
-                            page.createError = err
-                            if (err === "") nameField.text = ""
+                        PillButton {
+                            id: create
+                            implicitHeight: 32
+                            text: "Criar perfil"
+                            onClicked: {
+                                const err = page.backend.createProfile(nameField.text)
+                                page.createError = err
+                                if (err === "") nameField.text = ""
+                            }
                         }
                     }
                 }
@@ -117,57 +165,22 @@ Item {
                     visible: page.createError !== ""
                     text: page.createError
                     color: Theme.bad
-                    font.family: Theme.uiFonts[0]
+                    font.family: Theme.ui
                     font.pixelSize: 12
                 }
             }
 
             Card {
                 Layout.fillWidth: true
-                title: "Sistema"
-                Switch {
-                    visible: page.backend.autostartKnown
-                    text: "Iniciar com o sistema"
-                    checked: page.backend.autostartEnabled
-                    onToggled: {
-                        page.backend.setAutostart(checked)
-                        // o clique quebra o binding; reafirma para seguir o backend (falha => volta)
-                        checked = Qt.binding(() => page.backend.autostartEnabled)
-                    }
-                    contentItem: Text {
-                        leftPadding: parent.indicator.width + 10
-                        verticalAlignment: Text.AlignVCenter
-                        text: parent.text
-                        color: Theme.fg
-                        font.family: Theme.uiFonts[0]
-                        font.pixelSize: 14
-                    }
-                }
-                Text {
-                    visible: !page.backend.autostartKnown
-                    text: "Serviço do systemd não encontrado"
-                    color: Theme.fgDim
-                    font.family: Theme.uiFonts[0]
-                    font.pixelSize: 14
-                }
-            }
-
-            Card {
-                Layout.fillWidth: true
-                title: "Sobre"
-                Text {
-                    text: "ghub — versão 0.1.0"
-                    color: Theme.fg
-                    font.family: Theme.uiFonts[0]
-                    font.pixelSize: 14
-                }
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                    text: "Projeto independente, não afiliado à Logitech."
-                    color: Theme.fgDim
-                    font.family: Theme.uiFonts[0]
-                    font.pixelSize: 12
+                Layout.preferredWidth: 100
+                Layout.alignment: Qt.AlignTop
+                padH: 24; padV: 22
+                heading: "Sobre"
+                subtitle: "Projeto independente, não afiliado à Logitech."
+                SettingRow { text: "Nome"; Text { text: "G HUB Linux"; color: Theme.fg2; font.family: Theme.ui; font.pixelSize: 13 } }
+                SettingRow {
+                    text: "Versão"
+                    Text { text: "0.1.0"; color: Theme.fg2; font.family: Theme.mono; font.pixelSize: 12 }
                 }
             }
         }

@@ -2,27 +2,30 @@ import QtQuick
 import QtQuick.Controls.Basic
 import org.ghublinux.gui
 
+// Botao do mock (.btn): raio 9, borda #504945; `primary` = laranja.
 Button {
     id: btn
     property bool primary: false
-    font.pixelSize: 14
+    font.family: Theme.ui
+    font.pixelSize: 13
+    font.weight: Font.Medium
     implicitHeight: 36
-    leftPadding: 18
-    rightPadding: 18
+    leftPadding: 16
+    rightPadding: 16
     contentItem: Text {
         text: btn.text
         font: btn.font
-        color: btn.primary ? Theme.bg : Theme.fg
+        color: btn.primary ? Theme.bgHard : Theme.fg
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
     background: Rectangle {
-        radius: height / 2
-        color: btn.primary ? (btn.hovered ? Qt.lighter(Theme.accent, 1.1) : Theme.accent)
-                           : (btn.hovered ? Qt.lighter(Theme.cardHi, 1.2) : Theme.cardHi)
-        border.color: btn.checked ? Theme.accent : "transparent"
-        border.width: btn.checked ? 2 : 0
+        radius: 9
+        color: btn.primary ? (btn.hovered ? Qt.lighter(Theme.accent, 1.08) : Theme.accent)
+                           : (btn.hovered ? Qt.lighter(Theme.raised, 1.15) : Theme.raised)
+        border.color: btn.primary ? Theme.accent : Theme.hi
+        border.width: 1
         opacity: btn.enabled ? 1 : 0.4
     }
 }
