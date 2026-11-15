@@ -76,14 +76,11 @@ impl Default for SysBackend {
     }
 }
 
-/// AdjustableDpi.
-const FEATURE_ADJUSTABLE_DPI: u16 = 0x2201;
-/// ReportRate.
-const FEATURE_REPORT_RATE: u16 = 0x8060;
-
-/// Só mouses com DPI e taxa de polling ajustáveis são gerenciados (teclados e afins não).
+/// Só mouses com DPI e taxa de polling ajustáveis (ou as versões estendidas, do G Pro X2)
+/// são gerenciados; teclados e afins não.
 pub fn is_supported_mouse<T: Transport>(dev: &Device<T>) -> bool {
-    dev.feature_index(FEATURE_ADJUSTABLE_DPI).is_ok() && dev.feature_index(FEATURE_REPORT_RATE).is_ok()
+    let has = |id: u16| dev.feature_index(id).is_ok();
+    (has(0x2201) || has(0x2202)) && (has(0x8060) || has(0x8061))
 }
 
 fn node_prefix(node: &HidNode) -> String {
@@ -179,6 +176,9 @@ mod tests {
         assert!(!is_supported_mouse(&dev(&[0x0001, 0x2201])));
         assert!(!is_supported_mouse(&dev(&[0x0001, 0x8060])));
         assert!(!is_supported_mouse(&dev(&[0x0001, 0x1b04, 0x4540])));
+        // G Pro X2: DPI e polling estendidos.
+        assert!(is_supported_mouse(&dev(&[0x0001, 0x2202, 0x8061])));
+        assert!(!is_supported_mouse(&dev(&[0x0001, 0x2202])));
     }
 
     #[test]

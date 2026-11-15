@@ -1,9 +1,11 @@
 pub mod battery;
 pub mod device_name;
 pub mod dpi;
+pub mod dpi_ext;
 pub mod onboard;
 pub mod onboard_fake;
 pub mod report_rate;
+pub mod report_rate_ext;
 
 /// Nome legível de features HID++ conhecidas (para diagnóstico).
 pub fn name(id: u16) -> Option<&'static str> {
@@ -19,7 +21,9 @@ pub fn name(id: u16) -> Option<&'static str> {
         0x1B04 => "ReprogControlsV4",
         0x1D4B => "WirelessDeviceStatus",
         0x2201 => "AdjustableDpi",
+        0x2202 => "ExtendedAdjustableDpi",
         0x8060 => "ReportRate",
+        0x8061 => "ExtendedAdjustableReportRate",
         0x8071 => "RgbEffects",
         0x8100 => "OnboardProfiles",
         0x8110 => "MouseButtonSpy",
