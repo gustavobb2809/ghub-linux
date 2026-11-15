@@ -358,6 +358,14 @@ pub fn supports_led<T: Transport>(dev: &mut Device<T>) -> bool {
     )
 }
 
+/// Coloca o mouse em modo host (`0x8100` fn1 = 2): sem isso, mouses com DPI estendido recusam
+/// as gravações vindas do host. Não toca na flash do perfil; o modo volta ao padrão quando o
+/// mouse é desligado.
+pub fn set_host_mode<T: Transport>(dev: &mut Device<T>) -> Result<()> {
+    dev.call(ONBOARD_PROFILES, 1, &[2])?;
+    Ok(())
+}
+
 /// `$XDG_DATA_HOME/ghub-linux/onboard-backup` (padrão `~/.local/share/...`).
 pub fn default_backup_dir() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")

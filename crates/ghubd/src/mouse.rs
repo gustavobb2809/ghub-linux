@@ -4,7 +4,7 @@ use std::time::Duration;
 use hidpp::device::{Device, DEFAULT_TIMEOUT};
 use hidpp::features::dpi::{self, DpiSupport};
 use hidpp::features::onboard::{self, Led, LedKind};
-use hidpp::features::report_rate;
+use hidpp::features::{dpi_ext, report_rate, report_rate_ext};
 use hidpp::transport::Transport;
 use hidpp::HidppError;
 
@@ -63,12 +63,41 @@ impl<T: Transport> HidppMouse<T> {
     }
 }
 
+impl<T: Transport> HidppMouse<T> {
+    /// Mouses novos (G Pro X2) trazem o DPI estendido `0x2202` no lugar do `0x2201`.
+    fn extended_dpi(&self) -> bool {
+        self.device.feature_index(dpi::ADJUSTABLE_DPI).is_err()
+            && self.device.feature_index(dpi_ext::EXTENDED_ADJUSTABLE_DPI).is_ok()
+    }
+
+    /// Idem para o polling: `0x8061` no lugar do `0x8060`.
+    fn extended_polling(&self) -> bool {
+        self.device.feature_index(report_rate::REPORT_RATE).is_err()
+            && self.device.feature_index(report_rate_ext::EXTENDED_REPORT_RATE).is_ok()
+    }
+}
+
 impl<T: Transport + Send> Mouse for HidppMouse<T> {
     fn capabilities(&mut self) -> MouseResult<Capabilities> {
+        let dpi = if self.extended_dpi() {
+            // Em modo onboard o firmware recusa a gravação de DPI; o modo host é reaplicado a
+            // cada reconexão, pois este método roda toda vez que o mouse volta.
+            onboard::set_host_mode(&mut self.device)?;
+            dpi_ext::supported(&mut self.device, SENSOR)?
+        } else {
+            dpi::supported(&mut self.device, SENSOR)?
+        };
+        // Polling estendido é só leitura (a gravação não tem efeito conhecido): sem opções.
+        let polling_hz = if self.extended_polling() {
+            Vec::new()
+        } else {
+            report_rate::supported_hz(&mut self.device)?
+        };
         Ok(Capabilities {
-            dpi: dpi::supported(&mut self.device, SENSOR)?,
-            polling_hz: report_rate::supported_hz(&mut self.device)?,
+            dpi,
+            polling_hz,
             led: if self.device.feature_index(onboard::ONBOARD_PROFILES).is_ok()
+                && !self.extended_dpi()
                 && onboard::supports_led(&mut self.device)
             {
                 LedKind::ALL.to_vec()
@@ -79,18 +108,30 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
     }
 
     fn read_dpi(&mut self) -> MouseResult<u16> {
+        if self.extended_dpi() {
+            return Ok(dpi_ext::current(&mut self.device, SENSOR)?.0);
+        }
         Ok(dpi::current(&mut self.device, SENSOR)?.0)
     }
 
     fn read_polling_hz(&mut self) -> MouseResult<u16> {
+        if self.extended_polling() {
+            return report_rate_ext::current_hz(&mut self.device);
+        }
         report_rate::current_hz(&mut self.device)
     }
 
     fn set_dpi(&mut self, value: u16) -> MouseResult<u16> {
+        if self.extended_dpi() {
+            return dpi_ext::set(&mut self.device, SENSOR, value);
+        }
         dpi::set(&mut self.device, SENSOR, value)
     }
 
     fn set_polling_hz(&mut self, hz: u16) -> MouseResult<()> {
+        if self.extended_polling() {
+            return Err(HidppError::InvalidArgument("polling is read-only on this device"));
+        }
         report_rate::set_hz(&mut self.device, hz)
     }
 
@@ -148,6 +189,44 @@ mod tests {
         assert_eq!(caps.dpi, DpiSupport::Range { min: 100, max: 25600, step: 50 });
         assert_eq!(caps.polling_hz, vec![1000, 500, 250, 125]);
         assert!(caps.led.is_empty(), "sem 0x8100 não há LED");
+    }
+
+    /// G Pro X2: DPI/polling estendidos, modo host e nenhum LED, mesmo com `0x8100`.
+    fn x2(fake: FakeTransport) -> HidppMouse<FakeTransport> {
+        let features = HashMap::from([(0x2202u16, 9u8), (0x8061u16, 12u8), (0x8100u16, 13u8)]);
+        HidppMouse::new(Device::with_features(fake, 1, features))
+    }
+
+    #[test]
+    fn extended_mouse_enters_host_mode_and_has_read_only_polling() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 13, fb(1), &[])); // modo host
+        let stream: [u8; 26] = [
+            0x00, 0x64, 0xe0, 0x01, 0x00, 0xc8, 0xe0, 0x02, 0x01, 0xf4, 0xe0, 0x05, 0x03, //
+            0xe8, 0xe0, 0x0a, 0x07, 0xd0, 0xe0, 0x14, 0x13, 0x88, 0xe0, 0x32, 0x27, 0x10,
+        ];
+        for (page, chunk) in stream.chunks(13).enumerate() {
+            let mut params = vec![0, 0, page as u8];
+            params.extend_from_slice(chunk);
+            fake.push_incoming(long_reply(1, 9, fb(2), &params));
+        }
+        fake.push_incoming(long_reply(1, 9, fb(2), &[0, 0, 2])); // página vazia: fim da lista
+        let mut m = x2(fake);
+        let caps = m.capabilities().unwrap();
+        assert_eq!(caps.dpi, DpiSupport::Range { min: 100, max: 10000, step: 100 });
+        assert!(caps.polling_hz.is_empty());
+        assert!(caps.led.is_empty(), "o X2 não tem LED");
+        assert!(m.set_polling_hz(500).is_err());
+    }
+
+    #[test]
+    fn extended_mouse_reads_dpi_and_polling_from_the_extended_features() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 9, fb(5), &[0, 0x03, 0x20, 0x03, 0x20, 0x03, 0x20, 0x03, 0x20, 2]));
+        fake.push_incoming(long_reply(1, 12, fb(2), &[3]));
+        let mut m = x2(fake);
+        assert_eq!(m.read_dpi(), Ok(800));
+        assert_eq!(m.read_polling_hz(), Ok(1000));
     }
 
     #[test]

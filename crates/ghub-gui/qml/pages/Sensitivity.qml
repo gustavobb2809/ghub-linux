@@ -218,7 +218,19 @@ Item {
                     padH: 24; padV: 22
                     heading: "Taxa de polling"
                     subtitle: "Mais Hz = menos latência e mais consumo de bateria."
+                    Text {
+                        visible: page.pollingOptions.length === 0
+                        text: page.backend.pollingHz > 0
+                              ? page.backend.pollingHz + " Hz — este mouse não permite alterar a taxa por aqui."
+                              : "Indisponível neste mouse."
+                        color: Theme.fgDim
+                        font.family: Theme.mono
+                        font.pixelSize: 13
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
                     Rectangle {
+                        visible: page.pollingOptions.length > 0
                         Layout.preferredWidth: segRow.implicitWidth + 8
                         Layout.preferredHeight: segRow.implicitHeight + 8
                         Layout.maximumWidth: parent.width

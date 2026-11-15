@@ -234,6 +234,38 @@ fn describe<T: Transport>(dev: &mut Device<T>) {
         Ok(v) => println!("    polling suportado: {v:?} Hz"),
         Err(e) => println!("    polling suportado: {e}"),
     }
+    raw_reads(dev);
+}
+
+/// Despeja os bytes crus das funções de **leitura** das features estendidas (0x2202 e 0x8061),
+/// para conferir o formato em hardware novo. Nunca chama funções de escrita.
+fn raw_reads<T: Transport>(dev: &mut Device<T>) {
+    // (feature, função, parâmetros): 0x2202 fn 0 = nº de sensores, 1 = capacidades,
+    // 2 = parâmetros atuais; 0x8061 fn 0 = lista de taxas, 1 = taxa atual.
+    let reads: [(u16, u8, &[u8]); 10] = [
+        (0x2202, 0, &[]),
+        (0x2202, 1, &[0]),
+        (0x2202, 2, &[0]),
+        (0x8061, 0, &[]),
+        (0x8061, 1, &[]),
+        (0x8061, 2, &[]),
+        (0x2202, 3, &[0]),
+        (0x2202, 2, &[0, 0, 1]),
+        (0x2202, 2, &[0, 0, 2]),
+        (0x2202, 2, &[0, 0, 3]),
+    ];
+    for (feature, function, params) in reads {
+        if dev.feature_index(feature).is_err() {
+            continue;
+        }
+        match dev.call(feature, function, params) {
+            Ok(p) => {
+                let hex: Vec<String> = p.iter().map(|b| format!("{b:02x}")).collect();
+                println!("    bruto 0x{feature:04x} fn{function} {params:02x?}: {}", hex.join(" "));
+            }
+            Err(e) => println!("    bruto 0x{feature:04x} fn{function} {params:02x?}: {e}"),
+        }
+    }
 }
 
 #[cfg(test)]

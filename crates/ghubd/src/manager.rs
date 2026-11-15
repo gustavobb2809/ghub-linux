@@ -366,7 +366,7 @@ impl<B: Backend> Manager<B> {
                     failure.get_or_insert(format!("falha ao definir o polling: {e}"));
                 }
             }
-        } else {
+        } else if !caps.polling_hz.is_empty() {
             eprintln!("ghubd: {} não suporta {} Hz; ignorado", d.id, profile.polling_hz);
         }
         let dpi = profile.active_dpi();
