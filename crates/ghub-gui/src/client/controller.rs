@@ -12,6 +12,7 @@ pub enum Command {
     SetActiveLevel(u32),
     SetPolling(u32),
     SetLed(ghub_ipc::LedSetting),
+    SetLiftOff(String),
     ApplyProfile,
     ActivateProfile(String),
     CreateProfile(String),
@@ -55,6 +56,15 @@ pub fn snapshot(api: &dyn DaemonApi, selected: Option<&str>, autostart: Option<b
                         if !effects.is_empty() {
                             if let Ok(current) = api.get_led(&s.id) {
                                 dv = dv.with_led(Some(LedView { effects, current }));
+                            }
+                        }
+                    }
+                }
+                if st.connected {
+                    if let Ok(levels) = api.lift_off_levels(&s.id) {
+                        if !levels.is_empty() {
+                            if let Ok(current) = api.get_lift_off(&s.id) {
+                                dv = dv.with_lift_off(Some(LiftOffView { levels, current }));
                             }
                         }
                     }
@@ -178,6 +188,7 @@ impl Controller {
             Command::SetDpiLevels { .. } => unreachable!(),
             Command::SetActiveLevel(i) => self.with_device(|c, id| c.api.set_active_dpi_level(&id, i)),
             Command::SetPolling(hz) => self.with_device(|c, id| c.api.set_polling_rate(&id, hz)),
+            Command::SetLiftOff(v) => self.with_device(|c, id| c.api.set_lift_off(&id, &v)),
             Command::SetLed(s) => {
                 self.with_device(|c, id| c.api.set_led(&id, &s));
                 (self.sink)(Update::LedDone);
@@ -285,6 +296,28 @@ mod tests {
     fn snapshot_has_no_led_when_the_device_reports_none() {
         let d = FakeDaemon::scenario("no-led");
         assert!(snapshot(&d, None, None).device.unwrap().led.is_none());
+    }
+
+    #[test]
+    fn snapshot_has_lift_off_only_when_the_mouse_can_adjust_it() {
+        assert!(snapshot(&FakeDaemon::new(), None, None).device.unwrap().lift_off.is_none());
+        let d = FakeDaemon::scenario("lift-off");
+        let l = snapshot(&d, None, None).device.unwrap().lift_off.expect("lift-off no cenário");
+        assert_eq!(l.levels, vec!["low", "medium", "high"]);
+        assert_eq!(l.current, "medium");
+    }
+
+    #[test]
+    fn set_lift_off_writes_and_refreshes() {
+        let d = Arc::new(FakeDaemon::scenario("lift-off"));
+        let (tx, urx, h) = rig(d.clone());
+        next_state(&urx);
+        cmd(&tx, Command::SetLiftOff("high".into()));
+        wait_for_call(&d, "set_lift_off");
+        assert!(d.calls().contains(&"set_lift_off dev-1 high".to_string()));
+        let last = last_state_after(&urx, Duration::from_millis(300));
+        assert_eq!(last.device.unwrap().lift_off.unwrap().current, "high");
+        finish(tx, h);
     }
 
     fn red() -> ghub_ipc::LedSetting {
@@ -676,6 +709,9 @@ mod tests {
         fn led_effects(&self, id: &str) -> Result<Vec<String>, ApiError> { self.0.led_effects(id) }
         fn get_led(&self, id: &str) -> Result<ghub_ipc::LedSetting, ApiError> { self.0.get_led(id) }
         fn set_led(&self, id: &str, s: &ghub_ipc::LedSetting) -> Result<(), ApiError> { self.0.set_led(id, s) }
+        fn lift_off_levels(&self, id: &str) -> Result<Vec<String>, ApiError> { self.0.lift_off_levels(id) }
+        fn get_lift_off(&self, id: &str) -> Result<String, ApiError> { self.0.get_lift_off(id) }
+        fn set_lift_off(&self, id: &str, v: &str) -> Result<(), ApiError> { self.0.set_lift_off(id, v) }
         fn list_profiles(&self) -> Result<Vec<String>, ApiError> { self.0.list_profiles() }
         fn get_active_profile(&self) -> Result<String, ApiError> { self.0.get_active_profile() }
         fn activate_profile(&self, n: &str) -> Result<(), ApiError> { self.0.activate_profile(n) }

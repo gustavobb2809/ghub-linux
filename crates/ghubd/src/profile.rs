@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use hidpp::features::dpi::DpiSupport;
+use hidpp::features::dpi_ext::LiftOff;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_DPI_LEVELS: usize = 5;
@@ -35,6 +36,9 @@ pub struct Profile {
     pub dpi_levels: Vec<u16>,
     pub active_level: usize,
     pub polling_hz: u16,
+    /// Lift-off (`low`, `medium`, `high`); ausente = não mexer no que está no mouse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lift_off: Option<String>,
 }
 
 fn check_name(name: &str) -> Result<(), ProfileError> {
@@ -61,6 +65,7 @@ impl Profile {
             dpi_levels: vec![400, 800, 1600, 3200, 6400],
             active_level: 2,
             polling_hz: 1000,
+            lift_off: None,
         }
     }
 
@@ -85,6 +90,13 @@ impl Profile {
         }
         if self.polling_hz == 0 {
             return Err(ProfileError::Invalid("a taxa de polling não pode ser 0".into()));
+        }
+        if let Some(name) = &self.lift_off {
+            if LiftOff::parse(name).is_none() {
+                return Err(ProfileError::Invalid(format!(
+                    "lift-off inválido: {name} (use low, medium ou high)"
+                )));
+            }
         }
         Ok(())
     }
@@ -323,6 +335,7 @@ mod tests {
             dpi_levels: levels.to_vec(),
             active_level: active,
             polling_hz: hz,
+            lift_off: None,
         }
     }
 

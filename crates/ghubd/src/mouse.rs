@@ -4,7 +4,8 @@ use std::time::Duration;
 use hidpp::device::{Device, DEFAULT_TIMEOUT};
 use hidpp::features::dpi::{self, DpiSupport};
 use hidpp::features::onboard::{self, Led, LedKind};
-use hidpp::features::{dpi_ext, report_rate, report_rate_ext};
+use hidpp::features::dpi_ext::{self, LiftOff};
+use hidpp::features::{report_rate, report_rate_ext};
 use hidpp::transport::Transport;
 use hidpp::HidppError;
 
@@ -20,6 +21,8 @@ pub struct Capabilities {
     pub polling_hz: Vec<u16>,
     /// Efeitos de LED suportados; vazio sem `0x8100`.
     pub led: Vec<LedKind>,
+    /// O lift-off pode ser ajustado (só no DPI estendido `0x2202`).
+    pub lift_off: bool,
 }
 
 /// Operações que o daemon precisa de um mouse. Implementado sobre HID++ e, nos testes, por um falso.
@@ -34,6 +37,9 @@ pub trait Mouse: Send {
     fn led(&mut self) -> MouseResult<Led>;
     /// Grava o LED no perfil onboard ativo (lento: escreve na flash do mouse).
     fn set_led(&mut self, led: &Led) -> MouseResult<()>;
+    /// Lift-off atual; erro se o mouse não permite ajustar.
+    fn lift_off(&mut self) -> MouseResult<LiftOff>;
+    fn set_lift_off(&mut self, value: LiftOff) -> MouseResult<()>;
     /// Verifica, sem demora, se o dispositivo ainda responde.
     fn ping(&mut self) -> MouseResult<()>;
 }
@@ -91,6 +97,8 @@ impl<T: Transport> HidppMouse<T> {
 
 impl<T: Transport + Send> Mouse for HidppMouse<T> {
     fn capabilities(&mut self) -> MouseResult<Capabilities> {
+        let lift_off = self.extended_dpi()
+            && dpi_ext::supports_lift_off(&mut self.device, SENSOR)?;
         let dpi = if self.extended_dpi() {
             // Em modo onboard o firmware recusa a gravação de DPI; o modo host é reaplicado a
             // cada reconexão, pois este método roda toda vez que o mouse volta.
@@ -115,6 +123,7 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
             } else {
                 Vec::new()
             },
+            lift_off,
         })
     }
 
@@ -171,6 +180,20 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
         result
     }
 
+    fn lift_off(&mut self) -> MouseResult<LiftOff> {
+        if !self.extended_dpi() {
+            return Err(HidppError::FeatureNotSupported(dpi_ext::EXTENDED_ADJUSTABLE_DPI));
+        }
+        dpi_ext::lift_off(&mut self.device, SENSOR)
+    }
+
+    fn set_lift_off(&mut self, value: LiftOff) -> MouseResult<()> {
+        if !self.extended_dpi() {
+            return Err(HidppError::FeatureNotSupported(dpi_ext::EXTENDED_ADJUSTABLE_DPI));
+        }
+        dpi_ext::set_lift_off(&mut self.device, SENSOR, value)
+    }
+
     fn ping(&mut self) -> MouseResult<()> {
         self.device.set_timeout(PING_TIMEOUT);
         let result = self.device.ping();
@@ -202,6 +225,7 @@ mod tests {
         assert_eq!(caps.dpi, DpiSupport::Range { min: 100, max: 25600, step: 50 });
         assert_eq!(caps.polling_hz, vec![1000, 500, 250, 125]);
         assert!(caps.led.is_empty(), "sem 0x8100 não há LED");
+        assert!(!caps.lift_off, "o G703 (0x2201) não ajusta lift-off");
     }
 
     /// G Pro X2: DPI/polling estendidos, modo host e nenhum LED, mesmo com `0x8100`.
@@ -213,6 +237,7 @@ mod tests {
     #[test]
     fn extended_mouse_enters_host_mode_and_lists_its_polling_rates() {
         let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 9, fb(1), &[0, 5, 0x0f])); // flags: lift-off ajustável
         fake.push_incoming(long_reply(1, 13, fb(1), &[])); // modo host
         let stream: [u8; 26] = [
             0x00, 0x64, 0xe0, 0x01, 0x00, 0xc8, 0xe0, 0x02, 0x01, 0xf4, 0xe0, 0x05, 0x03, //
@@ -230,6 +255,7 @@ mod tests {
         assert_eq!(caps.dpi, DpiSupport::Range { min: 100, max: 10000, step: 100 });
         assert_eq!(caps.polling_hz, vec![125, 250, 500, 1000, 2000, 4000, 8000]);
         assert!(caps.led.is_empty(), "o X2 não tem LED");
+        assert!(caps.lift_off);
     }
 
     #[test]

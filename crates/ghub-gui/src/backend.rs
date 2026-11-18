@@ -44,6 +44,9 @@ pub mod qobject {
         #[qproperty(i32, led_period_ms, cxx_name = "ledPeriodMs")]
         #[qproperty(i32, led_intensity, cxx_name = "ledIntensity")]
         #[qproperty(bool, led_busy, cxx_name = "ledBusy")]
+        #[qproperty(bool, lift_off_supported, cxx_name = "liftOffSupported")]
+        #[qproperty(QString, lift_off_levels_json, cxx_name = "liftOffLevelsJson")]
+        #[qproperty(QString, lift_off, cxx_name = "liftOff")]
         #[qproperty(QString, last_error, cxx_name = "lastError")]
         type Backend = super::BackendRust;
 
@@ -67,6 +70,9 @@ pub mod qobject {
         #[qinvokable]
         #[cxx_name = "setPolling"]
         fn set_polling(self: Pin<&mut Backend>, hz: i32);
+        #[qinvokable]
+        #[cxx_name = "chooseLiftOff"]
+        fn set_lift_off_level(self: Pin<&mut Backend>, value: QString);
         #[qinvokable]
         #[cxx_name = "applyLed"]
         fn apply_led(self: Pin<&mut Backend>, effect: QString, color: QString, period_ms: i32, intensity: i32) -> QString;
@@ -172,6 +178,9 @@ pub struct BackendRust {
     led_period_ms: i32,
     led_intensity: i32,
     led_busy: bool,
+    lift_off_supported: bool,
+    lift_off_levels_json: QString,
+    lift_off: QString,
     last_error: QString,
 }
 
@@ -214,6 +223,9 @@ impl Default for BackendRust {
             led_period_ms: p.led_period_ms,
             led_intensity: p.led_intensity,
             led_busy: false,
+            lift_off_supported: p.lift_off_supported,
+            lift_off_levels_json: QString::from(p.lift_off_levels_json.as_str()),
+            lift_off: QString::from(p.lift_off.as_str()),
             last_error: QString::default(),
         }
     }
@@ -273,6 +285,9 @@ impl qobject::Backend {
         self.as_mut().set_led_color(QString::from(p.led_color.as_str()));
         self.as_mut().set_led_period_ms(p.led_period_ms);
         self.as_mut().set_led_intensity(p.led_intensity);
+        self.as_mut().set_lift_off_supported(p.lift_off_supported);
+        self.as_mut().set_lift_off_levels_json(QString::from(p.lift_off_levels_json.as_str()));
+        self.as_mut().set_lift_off(QString::from(p.lift_off.as_str()));
             }
             Update::Error(t) => self.as_mut().set_last_error(QString::from(t.as_str())),
             Update::LedDone => self.as_mut().set_led_busy(false),
@@ -395,6 +410,17 @@ impl qobject::Backend {
     fn set_polling(self: Pin<&mut Self>, hz: i32) {
         if let Ok(hz) = u32::try_from(hz) {
             self.send(Command::SetPolling(hz));
+        }
+    }
+
+    /// Só envia níveis que o mouse anunciou (o daemon valida de novo).
+    fn set_lift_off_level(self: Pin<&mut Self>, value: QString) {
+        let value = value.to_string();
+        let known = self.rust().view.device.as_ref()
+            .and_then(|d| d.lift_off.as_ref())
+            .is_some_and(|l| l.levels.contains(&value));
+        if known {
+            self.send(Command::SetLiftOff(value));
         }
     }
 

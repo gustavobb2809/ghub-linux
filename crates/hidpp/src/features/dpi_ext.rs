@@ -5,6 +5,8 @@
 //!   13 bytes (a partir do byte 3 da resposta): `min, (0xE000|passo, max)*`, terminado em zero.
 //! - fn5 `[sensor]`: `[sensor, X atual, X padrão, Y atual, Y padrão, LOD]`.
 //! - fn6 `[sensor, X, Y, LOD]`: grava; só vale com o mouse em modo host (`onboard::set_host_mode`).
+//! - fn1 `[sensor]`: `[sensor, nº de níveis, flags]`; o bit 1 das flags indica lift-off ajustável.
+//! - Lift-off (LOD): o X2 aceita 1, 2 e 3 (baixa, média, alta) e recusa 0 com erro de argumento.
 
 use crate::device::Device;
 use crate::error::{HidppError, Result};
@@ -13,6 +15,7 @@ use crate::transport::Transport;
 
 pub const EXTENDED_ADJUSTABLE_DPI: u16 = 0x2202;
 
+const FN_CAPS: u8 = 1;
 const FN_LIST: u8 = 2;
 const FN_GET: u8 = 5;
 const FN_SET: u8 = 6;
@@ -20,6 +23,45 @@ const PAGE_LEN: usize = 13;
 const MAX_PAGES: u8 = 16;
 /// Passo único oferecido à interface (a lista real tem passos de 1 a 200 por faixa).
 const UI_STEP: u16 = 100;
+
+/// Distância de levantamento (lift-off): a altura em que o sensor para de rastrear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiftOff {
+    Low,
+    Medium,
+    High,
+}
+
+impl LiftOff {
+    pub const ALL: [LiftOff; 3] = [LiftOff::Low, LiftOff::Medium, LiftOff::High];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LiftOff::Low => "low",
+            LiftOff::Medium => "medium",
+            LiftOff::High => "high",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<LiftOff> {
+        LiftOff::ALL.into_iter().find(|l| l.name() == name)
+    }
+
+    fn wire(self) -> u8 {
+        match self {
+            LiftOff::Low => 1,
+            LiftOff::Medium => 2,
+            LiftOff::High => 3,
+        }
+    }
+
+    fn from_wire(b: u8) -> Result<LiftOff> {
+        LiftOff::ALL
+            .into_iter()
+            .find(|l| l.wire() == b)
+            .ok_or(HidppError::UnexpectedResponse("unknown lift-off value"))
+    }
+}
 
 /// Faixa de DPI com passo constante: `min, min+passo, ..., max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +155,27 @@ fn read_params<T: Transport>(dev: &mut Device<T>, sensor: u8) -> Result<Vec<u8>>
     Ok(p)
 }
 
+/// O sensor permite ajustar o lift-off (bit 1 das flags de `fn1`).
+pub fn supports_lift_off<T: Transport>(dev: &mut Device<T>, sensor: u8) -> Result<bool> {
+    let p = dev.call(EXTENDED_ADJUSTABLE_DPI, FN_CAPS, &[sensor])?;
+    Ok(p[2] & 0x02 != 0)
+}
+
+pub fn lift_off<T: Transport>(dev: &mut Device<T>, sensor: u8) -> Result<LiftOff> {
+    LiftOff::from_wire(read_params(dev, sensor)?[9])
+}
+
+/// Grava o lift-off mantendo o DPI atual de X e Y.
+pub fn set_lift_off<T: Transport>(dev: &mut Device<T>, sensor: u8, value: LiftOff) -> Result<()> {
+    let p = read_params(dev, sensor)?;
+    dev.call(
+        EXTENDED_ADJUSTABLE_DPI,
+        FN_SET,
+        &[sensor, p[1], p[2], p[5], p[6], value.wire()],
+    )?;
+    Ok(())
+}
+
 /// Devolve `(dpi_atual, dpi_padrão)` do eixo X.
 pub fn current<T: Transport>(dev: &mut Device<T>, sensor: u8) -> Result<(u16, u16)> {
     let p = read_params(dev, sensor)?;
@@ -191,6 +254,39 @@ mod tests {
         fake.push_incoming(long_reply(1, 9, fb(FN_GET), &[0, 0x04, 0xb0, 0x03, 0x20, 0x04, 0xb0, 0x03, 0x20, 2]));
         let mut d = dev(fake);
         assert_eq!(current(&mut d, 0), Ok((1200, 800)));
+    }
+
+    #[test]
+    fn lift_off_names_and_wire_values() {
+        assert_eq!(LiftOff::parse("medium"), Some(LiftOff::Medium));
+        assert_eq!(LiftOff::parse("x"), None);
+        assert_eq!(LiftOff::from_wire(1), Ok(LiftOff::Low));
+        assert_eq!(LiftOff::from_wire(3), Ok(LiftOff::High));
+        assert!(LiftOff::from_wire(0).is_err(), "o mouse recusa 0");
+    }
+
+    #[test]
+    fn detects_lift_off_support_from_the_flags() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 9, fb(FN_CAPS), &[0, 5, 0x0f]));
+        fake.push_incoming(long_reply(1, 9, fb(FN_CAPS), &[0, 5, 0x01]));
+        let mut d = dev(fake);
+        assert_eq!(supports_lift_off(&mut d, 0), Ok(true));
+        assert_eq!(supports_lift_off(&mut d, 0), Ok(false));
+    }
+
+    #[test]
+    fn set_lift_off_keeps_the_current_dpi_of_both_axes() {
+        let mut fake = FakeTransport::new();
+        // X 1400 (padrão 800), Y 1400 (padrão 800), LOD 2.
+        fake.push_incoming(long_reply(1, 9, fb(FN_GET), &[0, 0x05, 0x78, 0x03, 0x20, 0x05, 0x78, 0x03, 0x20, 2]));
+        fake.push_incoming(long_reply(1, 9, fb(FN_SET), &[0, 0x05, 0x78, 0x05, 0x78, 3]));
+        fake.push_incoming(long_reply(1, 9, fb(FN_GET), &[0, 0x05, 0x78, 0x03, 0x20, 0x05, 0x78, 0x03, 0x20, 3]));
+        let mut d = dev(fake);
+        assert_eq!(set_lift_off(&mut d, 0, LiftOff::High), Ok(()));
+        assert_eq!(lift_off(&mut d, 0), Ok(LiftOff::High));
+        let t = d.into_transport();
+        assert_eq!(&t.written[1][4..10], &[0, 0x05, 0x78, 0x05, 0x78, 3]);
     }
 
     #[test]

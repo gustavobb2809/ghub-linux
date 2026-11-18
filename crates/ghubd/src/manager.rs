@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use ghub_ipc::{DeviceState, DeviceSummary, BATTERY_UNKNOWN, STATE_UNKNOWN};
 use hidpp::features::dpi::DpiSupport;
+use hidpp::features::dpi_ext::LiftOff;
 use hidpp::features::onboard::Led;
 
 use crate::backend::Backend;
@@ -62,6 +63,9 @@ pub enum Command {
     LedEffects { id: String, reply: Sender<Result<Vec<String>, ManagerError>> },
     GetLed { id: String, reply: Sender<Result<Led, ManagerError>> },
     SetLed { id: String, led: Led, reply: Sender<Result<(), ManagerError>> },
+    LiftOffLevels { id: String, reply: Sender<Result<Vec<String>, ManagerError>> },
+    GetLiftOff { id: String, reply: Sender<Result<LiftOff, ManagerError>> },
+    SetLiftOff { id: String, value: LiftOff, reply: Sender<Result<(), ManagerError>> },
     ListProfiles(Sender<Vec<String>>),
     ActiveProfile(Sender<String>),
     ActivateProfile { name: String, reply: Sender<Result<(), ManagerError>> },
@@ -281,6 +285,42 @@ impl<B: Backend> Manager<B> {
         self.commit_profile_change(idx, candidate)
     }
 
+    /// Níveis de lift-off do dispositivo; vazio sem suporte (ou offline).
+    pub fn lift_off_levels(&self, id: &str) -> Result<Vec<String>, ManagerError> {
+        let idx = self.find(id)?;
+        let supported = self.devices[idx].caps.as_ref().is_some_and(|c| c.lift_off);
+        Ok(if supported {
+            LiftOff::ALL.iter().map(|l| l.name().to_string()).collect()
+        } else {
+            Vec::new()
+        })
+    }
+
+    fn lift_off_caps(&self, idx: usize) -> Result<(), ManagerError> {
+        if self.online_caps(idx)?.lift_off {
+            Ok(())
+        } else {
+            Err(ManagerError::Invalid("este dispositivo não permite ajustar o lift-off".into()))
+        }
+    }
+
+    pub fn lift_off(&mut self, id: &str) -> Result<LiftOff, ManagerError> {
+        let idx = self.find(id)?;
+        self.lift_off_caps(idx)?;
+        let mouse = self.devices[idx].mouse.as_mut().expect("online");
+        mouse.lift_off().map_err(|e| ManagerError::Device(e.to_string()))
+    }
+
+    /// Guarda o lift-off no perfil ativo e o aplica, como o polling.
+    pub fn set_lift_off(&mut self, id: &str, value: LiftOff) -> Result<(), ManagerError> {
+        let idx = self.find(id)?;
+        self.lift_off_caps(idx)?;
+        let mut candidate = self.store.active().clone();
+        candidate.lift_off = Some(value.name().to_string());
+        candidate.check_shape()?;
+        self.commit_profile_change(idx, candidate)
+    }
+
     /// Efeitos de LED do dispositivo; vazio sem suporte (ou offline).
     pub fn led_effects(&self, id: &str) -> Result<Vec<String>, ManagerError> {
         let idx = self.find(id)?;
@@ -379,6 +419,15 @@ impl<B: Backend> Manager<B> {
             }
         } else {
             eprintln!("ghubd: {} não suporta {dpi} DPI; ignorado", d.id);
+        }
+        // Lift-off: só quando o perfil define um valor e o mouse permite ajustar.
+        if let Some(lod) = profile.lift_off.as_deref().and_then(LiftOff::parse) {
+            if caps.lift_off && mouse.lift_off().ok() != Some(lod) {
+                if let Err(e) = mouse.set_lift_off(lod) {
+                    eprintln!("ghubd: falha ao definir o lift-off de {}: {e}", d.id);
+                    failure.get_or_insert(format!("falha ao definir o lift-off: {e}"));
+                }
+            }
         }
         let Some(why) = failure else {
             return Ok(());
@@ -573,6 +622,15 @@ impl<B: Backend> Manager<B> {
             }
             Command::SetLed { id, led, reply } => {
                 let _ = reply.send(self.set_led(&id, led));
+            }
+            Command::LiftOffLevels { id, reply } => {
+                let _ = reply.send(self.lift_off_levels(&id));
+            }
+            Command::GetLiftOff { id, reply } => {
+                let _ = reply.send(self.lift_off(&id));
+            }
+            Command::SetLiftOff { id, value, reply } => {
+                let _ = reply.send(self.set_lift_off(&id, value));
             }
             Command::ListProfiles(r) => {
                 let _ = r.send(self.list_profiles());
@@ -792,6 +850,46 @@ mod tests {
         m.set_polling("dev-1", 500).unwrap();
         assert_eq!(mouse.state().polling, 500);
         assert_eq!(m.store.active().polling_hz, 500);
+    }
+
+    #[test]
+    fn lift_off_is_rejected_on_mice_that_cannot_adjust_it() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        m.rescan();
+        assert_eq!(m.lift_off_levels("dev-1").unwrap(), Vec::<String>::new());
+        assert!(matches!(m.set_lift_off("dev-1", LiftOff::High), Err(ManagerError::Invalid(_))));
+        assert!(matches!(m.lift_off("dev-1"), Err(ManagerError::Invalid(_))));
+        assert!(mouse.state().lift_off_sets.is_empty());
+        assert_eq!(m.store.active().lift_off, None);
+    }
+
+    #[test]
+    fn lift_off_is_saved_in_the_profile_and_applied() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        mouse.state().caps.lift_off = true;
+        m.rescan();
+        assert_eq!(m.lift_off_levels("dev-1").unwrap(), vec!["low", "medium", "high"]);
+        assert!(mouse.state().lift_off_sets.is_empty(), "perfil sem lift-off: não mexe no mouse");
+        m.set_lift_off("dev-1", LiftOff::High).unwrap();
+        assert_eq!(m.lift_off("dev-1").unwrap(), LiftOff::High);
+        assert_eq!(m.store.active().lift_off.as_deref(), Some("high"));
+        assert_eq!(mouse.state().lift_off_sets, vec![LiftOff::High]);
+    }
+
+    #[test]
+    fn lift_off_from_the_profile_is_reapplied_when_the_mouse_comes_back() {
+        let (mut m, _rx, mouse, _b, _d) = setup_with(seeded_store(), 1600, 1000);
+        mouse.state().caps.lift_off = true;
+        m.rescan();
+        m.set_lift_off("dev-1", LiftOff::Low).unwrap();
+        // O mouse dorme, volta com outro valor (ex.: desligado e religado) e o daemon reaplica.
+        mouse.state().online = false;
+        m.tick();
+        mouse.state().online = true;
+        mouse.state().lift_off = LiftOff::Medium;
+        m.tick();
+        assert_eq!(mouse.state().lift_off, LiftOff::Low);
+        assert_eq!(mouse.state().lift_off_sets, vec![LiftOff::Low, LiftOff::Low]);
     }
 
     #[test]

@@ -30,6 +30,10 @@ pub trait DaemonApi: Send + Sync + 'static {
     fn led_effects(&self, id: &str) -> Result<Vec<String>, ApiError>;
     fn get_led(&self, id: &str) -> Result<LedSetting, ApiError>;
     fn set_led(&self, id: &str, setting: &LedSetting) -> Result<(), ApiError>;
+    /// Níveis de lift-off (`low`, `medium`, `high`); vazio quando o mouse não permite ajustar.
+    fn lift_off_levels(&self, id: &str) -> Result<Vec<String>, ApiError>;
+    fn get_lift_off(&self, id: &str) -> Result<String, ApiError>;
+    fn set_lift_off(&self, id: &str, value: &str) -> Result<(), ApiError>;
     fn list_profiles(&self) -> Result<Vec<String>, ApiError>;
     fn get_active_profile(&self) -> Result<String, ApiError>;
     fn activate_profile(&self, name: &str) -> Result<(), ApiError>;

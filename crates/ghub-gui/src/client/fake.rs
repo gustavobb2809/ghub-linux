@@ -15,6 +15,9 @@ pub struct FakeInner {
     pub led_effects: Vec<String>,
     /// Falha só a próxima gravação de LED (não atrapalha as leituras do `refresh`).
     pub fail_next_write: Option<ApiError>,
+    /// Vazio = o mouse não ajusta lift-off (como o G703); o cenário `lift-off` liga.
+    pub lift_off_levels: Vec<String>,
+    pub lift_off: String,
 }
 pub struct FakeDaemon { pub inner: Mutex<FakeInner> }
 
@@ -37,6 +40,8 @@ impl FakeDaemon {
             led: LedSetting { effect: "cycle".into(), color: String::new(), period_ms: 8000, intensity: 0 },
             led_effects: ["off", "fixed", "cycle", "breathing"].map(String::from).to_vec(),
             fail_next_write: None,
+            lift_off_levels: vec![],
+            lift_off: "medium".into(),
         }) }
     }
     pub fn scenario(name: &str) -> Self {
@@ -46,6 +51,9 @@ impl FakeDaemon {
             match name {
                 "stopped" => i.running = false,
                 "no-led" => i.led_effects.clear(),
+                "lift-off" => {
+                    i.lift_off_levels = ["low", "medium", "high"].map(String::from).to_vec();
+                }
                 "sleeping" => { let s = &mut i.devices[0]; s.connected = false; s.dpi_current = 0; }
                 _ => {}
             }
@@ -121,6 +129,25 @@ impl DaemonApi for FakeDaemon {
         if !i.running { return Err(ApiError::Unavailable); }
         if let Some(e) = i.fail_next_write.take() { return Err(e); }
         i.led = s.clone();
+        Ok(())
+    }
+    // Leituras fora de `calls`, como as de LED.
+    fn lift_off_levels(&self, _id: &str) -> Result<Vec<String>, ApiError> {
+        let i = self.inner.lock().unwrap();
+        if !i.running { return Err(ApiError::Unavailable); }
+        Ok(i.lift_off_levels.clone())
+    }
+    fn get_lift_off(&self, _id: &str) -> Result<String, ApiError> {
+        let i = self.inner.lock().unwrap();
+        if !i.running { return Err(ApiError::Unavailable); }
+        Ok(i.lift_off.clone())
+    }
+    fn set_lift_off(&self, id: &str, value: &str) -> Result<(), ApiError> {
+        let mut i = self.record(format!("set_lift_off {id} {value}"))?;
+        if !i.lift_off_levels.iter().any(|l| l == value) {
+            return Err(ApiError::Failed("lift-off inválido".into()));
+        }
+        i.lift_off = value.to_string();
         Ok(())
     }
     fn list_profiles(&self) -> Result<Vec<String>, ApiError> {

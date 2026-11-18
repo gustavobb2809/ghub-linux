@@ -2,6 +2,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::time::Duration;
 
 use ghub_ipc::{DeviceState, DeviceSummary, LedSetting};
+use hidpp::features::dpi_ext::LiftOff;
 use hidpp::features::onboard::Led;
 use zbus::{fdo, interface};
 
@@ -113,6 +114,24 @@ impl DaemonService {
             .recv_timeout(self.timeout.max(LED_REPLY_TIMEOUT))
             .map_err(|_| fdo::Error::Failed("o gerente de dispositivos não respondeu a tempo".into()))?
             .map_err(to_fdo)
+    }
+
+    fn lift_off_levels(&self, id: &str) -> fdo::Result<Vec<String>> {
+        let id = id.to_string();
+        self.ask_result(|reply| Command::LiftOffLevels { id, reply })
+    }
+
+    fn get_lift_off(&self, id: &str) -> fdo::Result<String> {
+        let id = id.to_string();
+        Ok(self.ask_result(|reply| Command::GetLiftOff { id, reply })?.name().to_string())
+    }
+
+    fn set_lift_off(&self, id: &str, value: &str) -> fdo::Result<()> {
+        let value = LiftOff::parse(value).ok_or_else(|| {
+            fdo::Error::InvalidArgs(format!("lift-off inválido: {value} (use low, medium ou high)"))
+        })?;
+        let id = id.to_string();
+        self.ask_result(|reply| Command::SetLiftOff { id, value, reply })
     }
 
     fn list_profiles(&self) -> fdo::Result<Vec<String>> {
@@ -240,6 +259,18 @@ mod tests {
         let (tx, _rx_kept_alive) = channel::<Command>();
         let svc = DaemonService::with_timeout(tx, Duration::from_millis(50));
         assert!(matches!(svc.devices(), Err(fdo::Error::Failed(_))));
+    }
+
+    #[test]
+    fn lift_off_validation_over_the_service() {
+        let (svc, tx, handle, _d) = running_service();
+        // O mouse falso não ajusta lift-off: lista vazia e pedido recusado.
+        assert_eq!(svc.lift_off_levels("dev-1").unwrap(), Vec::<String>::new());
+        let invalid = |r: fdo::Result<()>| matches!(r, Err(fdo::Error::InvalidArgs(_)));
+        assert!(invalid(svc.set_lift_off("dev-1", "medium")));
+        assert!(invalid(svc.set_lift_off("dev-1", "altíssimo")));
+        assert!(matches!(svc.lift_off_levels("nope"), Err(fdo::Error::UnknownObject(_))));
+        stop(tx, handle);
     }
 
     #[test]
