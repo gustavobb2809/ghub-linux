@@ -276,7 +276,9 @@ Item {
                         }
                     }
                 }
-                Item { Layout.fillWidth: true; Layout.preferredWidth: 100 }
+                // espaçador que mantém o card em meia largura; com muitas opções (7 no X2) o card
+                // precisa da linha toda para a barra de botões caber
+                Item { visible: page.pollingOptions.length <= 4; Layout.fillWidth: true; Layout.preferredWidth: 100 }
             }
         }
     }
