@@ -70,6 +70,11 @@ pub trait Daemon {
     fn led_effects(&self, id: &str) -> zbus::Result<Vec<String>>;
     fn get_led(&self, id: &str) -> zbus::Result<LedSetting>;
     fn set_led(&self, id: &str, effect: &str, color: &str, period_ms: u32, intensity: u32) -> zbus::Result<()>;
+    /// Níveis de lift-off (`low`, `medium`, `high`); vazio quando o mouse não permite ajustar.
+    fn lift_off_levels(&self, id: &str) -> zbus::Result<Vec<String>>;
+    fn get_lift_off(&self, id: &str) -> zbus::Result<String>;
+    /// Guarda no perfil ativo e aplica no mouse.
+    fn set_lift_off(&self, id: &str, value: &str) -> zbus::Result<()>;
     fn list_profiles(&self) -> zbus::Result<Vec<String>>;
     fn get_active_profile(&self) -> zbus::Result<String>;
     fn activate_profile(&self, name: &str) -> zbus::Result<()>;

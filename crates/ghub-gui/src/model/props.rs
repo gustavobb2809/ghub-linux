@@ -16,6 +16,7 @@ pub struct Props {
     pub devices_json: String, pub show_device_selector: bool, pub selected_device: String,
     pub led_supported: bool, pub led_effects_json: String, pub led_effect: String, pub led_color: String,
     pub led_period_ms: i32, pub led_intensity: i32,
+    pub lift_off_supported: bool, pub lift_off_levels_json: String, pub lift_off: String,
 }
 
 impl From<&ViewState> for Props {
@@ -31,6 +32,7 @@ impl From<&ViewState> for Props {
             ).unwrap_or_else(|_| "[]".into()),
             show_device_selector: v.choices.len() >= 2,
             dpi_levels_json: "[]".into(), polling_options_json: "[]".into(), led_effects_json: "[]".into(),
+            lift_off_levels_json: "[]".into(),
             battery_percent: -1, battery_text: battery_text(-1, ""), dpi_text: dpi_text(0),
             polling_text: polling_text(0),
             ..Props::default()
@@ -59,6 +61,11 @@ impl From<&ViewState> for Props {
                 p.led_period_ms = l.current.period_ms as i32;
                 p.led_intensity = l.current.intensity as i32;
             }
+            if let Some(l) = &d.lift_off {
+                p.lift_off_supported = true;
+                p.lift_off_levels_json = json_strings(&l.levels);
+                p.lift_off = l.current.clone();
+            }
             p.profile_differs = d.profile_differs();
             if p.profile_differs {
                 let want = d.dpi_levels.get(d.active_level as usize).copied().unwrap_or(0);
@@ -82,10 +89,26 @@ mod tests {
             range: DpiRange { min: 100, max: 25600, step: 50, list: vec![] },
             polling_hz: 1000, polling_options: vec![500, 1000],
             battery_percent: 80, battery_state: "discharging".into(),
-            led: None,
+            led: None, lift_off: None,
         }
     }
     fn with(d: DeviceView) -> ViewState { ViewState { device: Some(d), ..ViewState::default() } }
+
+    #[test]
+    fn lift_off_props_follow_the_device() {
+        use crate::model::state::LiftOffView;
+        let p = Props::from(&ViewState::default());
+        assert!(!p.lift_off_supported);
+        assert_eq!(p.lift_off_levels_json, "[]");
+        let d = dev(true, 1200).with_lift_off(Some(LiftOffView {
+            levels: vec!["low".into(), "medium".into(), "high".into()],
+            current: "high".into(),
+        }));
+        let p = Props::from(&with(d));
+        assert!(p.lift_off_supported);
+        assert_eq!(p.lift_off_levels_json, "[\"low\",\"medium\",\"high\"]");
+        assert_eq!(p.lift_off, "high");
+    }
 
     #[test]
     fn led_props_follow_the_device() {

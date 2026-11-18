@@ -16,6 +16,10 @@ pub struct DeviceChoice { pub id: String, pub name: String }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedView { pub effects: Vec<String>, pub current: ghub_ipc::LedSetting }
 
+/// Lift-off: níveis que o mouse aceita e o atual.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiftOffView { pub levels: Vec<String>, pub current: String }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceView {
     pub id: String, pub name: String, pub connected: bool,
@@ -23,6 +27,7 @@ pub struct DeviceView {
     pub range: DpiRange, pub polling_hz: u32, pub polling_options: Vec<u32>,
     pub battery_percent: i32, pub battery_state: String,
     pub led: Option<LedView>,
+    pub lift_off: Option<LiftOffView>,
 }
 
 impl DeviceView {
@@ -34,9 +39,11 @@ impl DeviceView {
             polling_options: s.polling_supported.clone(),
             battery_percent: s.battery_percent, battery_state: s.battery_state.clone(),
             led: None,
+            lift_off: None,
         }
     }
     pub fn with_led(mut self, led: Option<LedView>) -> Self { self.led = led; self }
+    pub fn with_lift_off(mut self, l: Option<LiftOffView>) -> Self { self.lift_off = l; self }
     pub fn levels(&self) -> Levels { Levels { levels: self.dpi_levels.clone(), active: self.active_level } }
     pub fn with_levels(mut self, l: Levels) -> Self { self.dpi_levels = l.levels; self.active_level = l.active; self }
     /// O DPI lido no mouse difere do nível ativo do perfil (ex.: botão de DPI).

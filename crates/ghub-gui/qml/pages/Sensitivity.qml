@@ -9,6 +9,10 @@ Item {
     readonly property alias levelCount: levelRepeater.count
     readonly property var levels: JSON.parse(backend.dpiLevelsJson)
     readonly property var pollingOptions: JSON.parse(backend.pollingOptionsJson)
+    readonly property var liftOffLevels: JSON.parse(backend.liftOffLevelsJson)
+    function liftOffLabel(name) {
+        return ({ low: "Baixa", medium: "Média", high: "Alta" })[name] || name
+    }
     // "usable": mouse acordado e DPI ja lido (nunca mostrar "0 DPI")
     readonly property bool usable: backend.connected && backend.dpiCurrent > 0
     property string rowError: ""
@@ -279,6 +283,63 @@ Item {
                 // espaçador que mantém o card em meia largura; com muitas opções (7 no X2) o card
                 // precisa da linha toda para a barra de botões caber
                 Item { visible: page.pollingOptions.length <= 4; Layout.fillWidth: true; Layout.preferredWidth: 100 }
+            }
+
+            // Lift-off: só em mouses que permitem ajustar (DPI estendido, ex.: G Pro X2)
+            RowLayout {
+                visible: page.backend.liftOffSupported
+                Layout.fillWidth: true
+                spacing: Theme.gap
+                Card {
+                    Layout.fillWidth: true
+                    Layout.preferredWidth: 100
+                    Layout.alignment: Qt.AlignTop
+                    padH: 24; padV: 22
+                    heading: "Distância de levantamento"
+                    subtitle: "Altura em que o sensor para de rastrear ao levantar o mouse."
+                    Rectangle {
+                        Layout.preferredWidth: lodRow.implicitWidth + 8
+                        Layout.preferredHeight: lodRow.implicitHeight + 8
+                        Layout.maximumWidth: parent.width
+                        color: Theme.bg
+                        radius: 10
+                        border.color: Theme.hi
+                        border.width: 1
+                        Row {
+                            id: lodRow
+                            anchors.centerIn: parent
+                            spacing: 3
+                            Repeater {
+                                model: page.liftOffLevels
+                                delegate: Rectangle {
+                                    id: lod
+                                    required property string modelData
+                                    readonly property bool on: modelData === page.backend.liftOff
+                                    width: lodText.implicitWidth + 32
+                                    height: lodText.implicitHeight + 16
+                                    radius: 7
+                                    color: on ? Theme.yellow : "transparent"
+                                    Text {
+                                        id: lodText
+                                        anchors.centerIn: parent
+                                        text: page.liftOffLabel(lod.modelData)
+                                        color: lod.on ? Theme.bg : Theme.fgDim
+                                        font.family: Theme.mono
+                                        font.pixelSize: 13
+                                        font.weight: lod.on ? Font.Medium : Font.Normal
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        enabled: page.usable
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: page.backend.chooseLiftOff(lod.modelData)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Item { Layout.fillWidth: true; Layout.preferredWidth: 100 }
             }
         }
     }

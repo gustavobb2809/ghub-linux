@@ -198,6 +198,15 @@ impl DaemonApi for RealDaemon {
     fn set_led(&self, id: &str, s: &LedSetting) -> Result<(), ApiError> {
         self.call(|p| p.set_led(id, &s.effect, &s.color, s.period_ms, s.intensity))
     }
+    fn lift_off_levels(&self, id: &str) -> Result<Vec<String>, ApiError> {
+        self.call(|p| p.lift_off_levels(id))
+    }
+    fn get_lift_off(&self, id: &str) -> Result<String, ApiError> {
+        self.call(|p| p.get_lift_off(id))
+    }
+    fn set_lift_off(&self, id: &str, value: &str) -> Result<(), ApiError> {
+        self.call(|p| p.set_lift_off(id, value))
+    }
     fn list_profiles(&self) -> Result<Vec<String>, ApiError> {
         self.call(|p| p.list_profiles())
     }
