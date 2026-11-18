@@ -24,6 +24,10 @@ ApplicationWindow {
     readonly property bool asleep: backend.hasDevice && !backend.connected
     readonly property bool onSettings: currentIndex === 2
     readonly property string sleepText: "Mouse desconectado ou dormindo — mova o mouse"
+    // o mouse selecionado já mostrou suporte a LED: dormindo, a aba Iluminação fica (desabilitada)
+    // em vez de sumir e mudar a barra de abas
+    property bool ledSeen: false
+    readonly property bool ledTab: backend.ledSupported || (win.asleep && win.ledSeen)
 
     function goTo(i) { if (i >= 0 && i < pageCount) currentIndex = i }
     function sensitivityLevelCount() { return sensitivity.levelCount }
@@ -68,14 +72,18 @@ ApplicationWindow {
     // Atalhos: Ctrl+1/2/3 nas abas, Ctrl+, nas Configurações, Ctrl+P no perfil.
     Shortcut { sequence: "Ctrl+1"; enabled: win.pagesVisible; onActivated: win.goTo(0) }
     Shortcut { sequence: "Ctrl+2"; enabled: win.pagesVisible; onActivated: win.goTo(1) }
-    Shortcut { sequence: "Ctrl+3"; enabled: win.pagesVisible && backend.ledSupported; onActivated: win.goTo(3) }
+    Shortcut { sequence: "Ctrl+3"; enabled: win.pagesVisible && win.ledTab; onActivated: win.goTo(3) }
     Shortcut { sequence: "Ctrl+,"; enabled: win.pagesVisible; onActivated: win.goTo(2) }
     Shortcut { sequence: "Ctrl+P"; enabled: pill.visible; onActivated: win.openProfileMenuByKey() }
 
     // Sem suporte a LED a aba some; se estava nela, volta para a Visao geral.
     Connections {
         target: backend
-        function onLedSupportedChanged() { if (!backend.ledSupported && win.currentIndex === 3) win.goTo(0) }
+        function onLedSupportedChanged() {
+            if (backend.ledSupported) win.ledSeen = true
+            else if (!win.asleep && win.currentIndex === 3) win.goTo(0)
+        }
+        function onSelectedDeviceChanged() { win.ledSeen = backend.ledSupported }
     }
 
     Rectangle {
@@ -351,7 +359,7 @@ ApplicationWindow {
                     NavTab {
                         id: nav3
                         text: "Iluminação"
-                        visible: backend.ledSupported
+                        visible: win.ledTab
                         enabled: win.pagesVisible
                         checked: win.currentIndex === 3
                         onClicked: win.goTo(3)

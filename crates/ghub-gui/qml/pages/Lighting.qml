@@ -12,6 +12,8 @@ Item {
     // paleta do tema, com o destaque do sistema primeiro (o mouse acende na cor do desktop)
     readonly property var swatches: Theme.ledSwatches
     readonly property bool usable: backend.connected && backend.ledSupported && !backend.ledBusy
+    // em janelas estreitas (tile de 900 px) a prévia vai para cima e os controles ganham a largura toda
+    readonly property bool stacked: width < 980
 
     // Estado editado: comeca no do mouse e volta a ele quando o daemon muda.
     property string effect: backend.ledEffect
@@ -50,23 +52,25 @@ Item {
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { }
 
-    RowLayout {
+    GridLayout {
         id: body
         x: Theme.pad
         y: Theme.pad
         width: flick.width - 2 * Theme.pad
-        spacing: Theme.gap
+        columns: page.stacked ? 1 : 2
+        columnSpacing: Theme.gap
+        rowSpacing: Theme.gap
 
         Card {
             Layout.fillWidth: true
             Layout.alignment: Qt.AlignTop
             Layout.preferredWidth: 1
-            Layout.preferredHeight: Math.max(420, controls.implicitHeight)
+            Layout.preferredHeight: page.stacked ? 300 : Math.max(420, controls.implicitHeight)
             Item {
                 Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
                 implicitWidth: art.implicitWidth
                 implicitHeight: art.implicitHeight
-                MouseArt { id: art; maxWidth: 220; maxHeight: 340; showLogo: false }
+                MouseArt { id: art; maxWidth: 220; maxHeight: page.stacked ? 240 : 340; showLogo: false }
                 LedPreview {
                     // Logo no ponto (110, 236) do desenho; o brilho cobre ~110 unidades.
                     width: 110 * art.k; height: width
@@ -90,7 +94,17 @@ Item {
                 Layout.fillWidth: true
                 heading: "Efeito"
                 subtitle: "Gravado no perfil ativo do mouse."
+                Text {
+                    visible: !page.backend.connected
+                    Layout.fillWidth: true
+                    text: "Mouse dormindo — mova o mouse para ajustar a iluminação."
+                    color: Theme.muted
+                    wrapMode: Text.WordWrap
+                    font.family: Theme.ui
+                    font.pixelSize: 13
+                }
                 SegmentedControl {
+                    visible: page.backend.connected
                     Layout.maximumWidth: parent.width
                     enabled: page.usable
                     name: "Efeito do LED"
@@ -173,6 +187,7 @@ Item {
                         from: 500; to: 20000; stepSize: 100
                         enabled: page.usable
                         accessibleName: "Período do efeito"
+                        unit: "ms"
                         value: page.periodMs
                         onMoved: page.periodMs = Math.round(value)
                     }
@@ -189,6 +204,7 @@ Item {
                         from: 0; to: 100; stepSize: 5
                         enabled: page.usable
                         accessibleName: "Intensidade do brilho"
+                        unit: "%"
                         value: page.intensity
                         onMoved: page.intensity = Math.round(value)
                     }

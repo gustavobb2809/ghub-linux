@@ -46,7 +46,8 @@ impl From<&ViewState> for Props {
             p.battery_text = battery_text(d.battery_percent, &d.battery_state);
             p.battery_low = battery_is_low(d.battery_percent);
             p.dpi_current = d.dpi_current as i32;
-            p.dpi_text = dpi_text(d.dpi_current);
+            // dormindo nada é lido: "—" (o aviso de mover o mouse explica); acordado sem leitura: "lendo…"
+            p.dpi_text = if d.connected { dpi_text(d.dpi_current) } else { "—".into() };
             p.dpi_levels_json = json_u32s(&d.dpi_levels);
             p.active_level = d.active_level as i32;
             p.dpi_min = d.range.min as i32; p.dpi_max = d.range.max as i32; p.dpi_step = d.range.step as i32;
@@ -134,6 +135,13 @@ mod tests {
         assert_eq!(p.dpi_levels_json, "[]");
         assert_eq!(p.polling_options_json, "[]");
         assert_eq!(p.devices_json, "[]");
+    }
+    #[test]
+    fn asleep_shows_a_dash_not_a_fake_reading() {
+        // dormindo, nada está sendo lido: "lendo…" mentiria; "—" junto com o aviso de mover o mouse
+        let p = Props::from(&with(dev(false, 0)));
+        assert_eq!(p.dpi_text, "—");
+        assert!(!p.dpi_text.contains('0'));
     }
     #[test]
     fn connected_with_unknown_dpi_never_shows_zero() {

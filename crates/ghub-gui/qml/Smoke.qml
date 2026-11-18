@@ -97,7 +97,7 @@ QtObject {
         case "dimmed":
             // mouse dormindo: controles desabilitados e nunca "0 DPI"
             return b.hasDevice && !b.connected && !root.win.sensitivityUsable()
-                && b.dpiText === "lendo…" && root.win.overviewDpiText() === "lendo…"
+                && b.dpiText === "—" && root.win.overviewDpiText() === "—"
         case "layout": {
             // geometria no tamanho minimo (900x600): nada encolhido nem fora da janela
             const w = root.win
