@@ -200,8 +200,10 @@ Item {
                 }
                 Text {
                     Layout.topMargin: 8
-                    text: "Faixa: " + page.backend.dpiMin + "–" + page.backend.dpiMax
-                          + " DPI, passo " + page.backend.dpiStep + ". Até 5 níveis."
+                    text: page.backend.dpiMax > 0
+                          ? "Faixa: " + page.backend.dpiMin + "–" + page.backend.dpiMax
+                            + " DPI, passo " + page.backend.dpiStep + ". Até 5 níveis."
+                          : "Faixa disponível quando o mouse acordar. Até 5 níveis."
                     color: Theme.muted
                     font.family: Theme.ui
                     font.pixelSize: 12
@@ -220,9 +222,11 @@ Item {
                     subtitle: "Mais Hz = menos latência e mais consumo de bateria."
                     Text {
                         visible: page.pollingOptions.length === 0
-                        text: page.backend.pollingHz > 0
-                              ? page.backend.pollingHz + " Hz — este mouse não permite alterar a taxa por aqui."
-                              : "Indisponível neste mouse."
+                        text: !page.backend.connected
+                              ? "Mouse dormindo — mova o mouse para ver a taxa."
+                              : page.backend.pollingHz > 0
+                                ? page.backend.pollingHz + " Hz — este mouse não permite alterar a taxa por aqui."
+                                : "Indisponível neste mouse."
                         color: Theme.fgDim
                         font.family: Theme.mono
                         font.pixelSize: 13
