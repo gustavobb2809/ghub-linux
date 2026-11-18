@@ -211,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn extended_mouse_enters_host_mode_and_lists_the_receiver_polling_rates() {
+    fn extended_mouse_enters_host_mode_and_lists_its_polling_rates() {
         let mut fake = FakeTransport::new();
         fake.push_incoming(long_reply(1, 13, fb(1), &[])); // modo host
         let stream: [u8; 26] = [
@@ -224,11 +224,11 @@ mod tests {
             fake.push_incoming(long_reply(1, 9, fb(2), &params));
         }
         fake.push_incoming(long_reply(1, 9, fb(2), &[0, 0, 2])); // página vazia: fim da lista
-        fake.push_incoming(long_reply(1, 12, fb(0), &[0x00, 0x0f])); // taxas do receptor
+        fake.push_incoming(long_reply(1, 12, fb(1), &[0x00, 0x7f])); // taxas suportadas
         let mut m = x2(fake);
         let caps = m.capabilities().unwrap();
         assert_eq!(caps.dpi, DpiSupport::Range { min: 100, max: 10000, step: 100 });
-        assert_eq!(caps.polling_hz, vec![125, 250, 500, 1000]);
+        assert_eq!(caps.polling_hz, vec![125, 250, 500, 1000, 2000, 4000, 8000]);
         assert!(caps.led.is_empty(), "o X2 não tem LED");
     }
 
