@@ -19,6 +19,8 @@ fn main() {
             QmlFile::from("qml/components/MouseArt.qml"),
             QmlFile::from("qml/components/Logo.qml"),
             QmlFile::from("qml/components/LedPreview.qml"),
+            QmlFile::from("qml/components/FocusRing.qml"),
+            QmlFile::from("qml/components/SegmentedControl.qml"),
             QmlFile::from("qml/pages/Overview.qml"),
             QmlFile::from("qml/pages/Sensitivity.qml"),
             QmlFile::from("qml/pages/Settings.qml"),

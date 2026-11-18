@@ -16,9 +16,11 @@ AbstractButton {
     implicitHeight: row.implicitHeight + 20
     implicitWidth: 200
     opacity: enabled ? 1 : 0.55
+    focusPolicy: Qt.TabFocus
     background: Rectangle {
         radius: 9
-        color: ent.checked ? Theme.raised : (ent.hovered && ent.enabled ? Qt.rgba(1, 1, 1, 0.04) : "transparent")
+        color: ent.checked ? Theme.selection : (ent.hovered && ent.enabled ? Theme.alpha(Theme.fg, 0.05) : "transparent")
+        FocusRing { target: ent; baseRadius: 9 }
     }
     contentItem: RowLayout {
         id: row

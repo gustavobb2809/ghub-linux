@@ -6,9 +6,11 @@ Rectangle {
     property string text: ""
     signal dismissed()
     visible: text !== ""
+    Accessible.role: Accessible.AlertMessage
+    Accessible.name: toast.text
     color: Theme.card
     radius: 10
-    border.color: Theme.bad
+    border.color: Theme.badText
     border.width: 1
     implicitHeight: msg.implicitHeight + 24
     implicitWidth: Math.min(560, msg.implicitWidth + 40)

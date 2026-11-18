@@ -9,12 +9,13 @@ Item {
 
     readonly property var effects: JSON.parse(backend.ledEffectsJson)
     readonly property var labels: ({ "fixed": "Fixo", "breathing": "Respiração", "cycle": "Ciclo de cores", "off": "Desligado" })
-    readonly property var swatches: ["#fe8019", "#fabd2f", "#b8bb26", "#8ec07c", "#83a598", "#d3869b", "#fb4934", "#ebdbb2"]
+    // paleta do tema, com o destaque do sistema primeiro (o mouse acende na cor do desktop)
+    readonly property var swatches: Theme.ledSwatches
     readonly property bool usable: backend.connected && backend.ledSupported && !backend.ledBusy
 
     // Estado editado: comeca no do mouse e volta a ele quando o daemon muda.
     property string effect: backend.ledEffect
-    property string color: backend.ledColor !== "" ? backend.ledColor : "#FE8019"
+    property string color: backend.ledColor !== "" ? backend.ledColor : String(Theme.ledSwatches[0]).toUpperCase()
     property int periodMs: backend.ledPeriodMs > 0 ? backend.ledPeriodMs : 4000
     property int intensity: backend.ledIntensity
     property string formError: ""
@@ -89,19 +90,14 @@ Item {
                 Layout.fillWidth: true
                 heading: "Efeito"
                 subtitle: "Gravado no perfil ativo do mouse."
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: 8
-                    Repeater {
-                        model: ["fixed", "breathing", "cycle", "off"].filter(e => page.effects.indexOf(e) >= 0)
-                        delegate: PillButton {
-                            required property string modelData
-                            text: page.labels[modelData]
-                            primary: page.effect === modelData
-                            enabled: page.usable
-                            onClicked: page.select(modelData)
-                        }
-                    }
+                SegmentedControl {
+                    Layout.maximumWidth: parent.width
+                    enabled: page.usable
+                    name: "Efeito do LED"
+                    values: ["fixed", "breathing", "cycle", "off"].filter(e => page.effects.indexOf(e) >= 0)
+                    current: page.effect
+                    label: function (v) { return page.labels[v] }
+                    onChosen: v => page.select(v)
                 }
             }
 
@@ -116,25 +112,48 @@ Item {
                     Repeater {
                         model: page.swatches
                         delegate: Rectangle {
+                            id: sw
                             required property string modelData
+                            readonly property bool on: page.color.toLowerCase() === String(modelData).toLowerCase()
                             width: 38; height: 38; radius: 10
                             color: modelData
                             border.width: 2
-                            border.color: page.color.toLowerCase() === modelData ? Theme.fg : Theme.line
+                            border.color: on ? Theme.fg : Theme.line
+                            activeFocusOnTab: page.usable
+                            Accessible.role: Accessible.RadioButton
+                            Accessible.name: "Cor " + String(modelData).toUpperCase()
+                            Accessible.checked: on
+                            Keys.onReturnPressed: page.color = String(sw.modelData).toUpperCase()
+                            Keys.onSpacePressed: page.color = String(sw.modelData).toUpperCase()
+                            FocusRing { target: sw; baseRadius: 10 }
                             MouseArea {
                                 anchors.fill: parent
                                 enabled: page.usable
-                                onClicked: page.color = parent.modelData
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: page.color = String(sw.modelData).toUpperCase()
                             }
                         }
                     }
                 }
                 TextField {
+                    id: hexField
                     Layout.topMargin: 14
                     Layout.preferredWidth: 140
                     enabled: page.usable
                     text: page.color
+                    color: Theme.fg
+                    selectionColor: Theme.accent
+                    selectedTextColor: Theme.onAccent
                     font.family: Theme.mono
+                    font.pixelSize: 14
+                    leftPadding: 10; rightPadding: 10; topPadding: 7; bottomPadding: 7
+                    Accessible.name: "Cor em hexadecimal"
+                    background: Rectangle {
+                        radius: 8
+                        color: Theme.bg
+                        border.color: hexField.activeFocus ? Theme.accent : Theme.border
+                        border.width: 1
+                    }
                     onEditingFinished: page.color = text
                 }
             }
@@ -153,6 +172,7 @@ Item {
                         active: true
                         from: 500; to: 20000; stepSize: 100
                         enabled: page.usable
+                        accessibleName: "Período do efeito"
                         value: page.periodMs
                         onMoved: page.periodMs = Math.round(value)
                     }
@@ -160,6 +180,7 @@ Item {
                 }
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.topMargin: 14
                     spacing: 16
                     Text { Layout.preferredWidth: 84; text: "Intensidade"; color: Theme.fgDim; font.family: Theme.ui; font.pixelSize: 13 }
                     DpiSlider {
@@ -167,6 +188,7 @@ Item {
                         active: true
                         from: 0; to: 100; stepSize: 5
                         enabled: page.usable
+                        accessibleName: "Intensidade do brilho"
                         value: page.intensity
                         onMoved: page.intensity = Math.round(value)
                     }
@@ -182,7 +204,7 @@ Item {
                     text: page.formError !== "" ? page.formError
                           : (page.backend.ledBusy ? "Gravando no mouse…"
                              : "Ao aplicar, a mudança é gravada no mouse.")
-                    color: page.formError !== "" ? Theme.bad : Theme.muted
+                    color: page.formError !== "" ? Theme.badText : Theme.muted
                     wrapMode: Text.WordWrap
                     font.family: Theme.ui
                     font.pixelSize: 13

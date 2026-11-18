@@ -41,7 +41,7 @@ Item {
             PathSvg { path: "M19 194h4a5 5 0 0 1 5 5v26a5 5 0 0 1 -5 5h-4a5 5 0 0 1 -5 -5v-26a5 5 0 0 1 5 -5z" }
         }
         ShapePath {
-            strokeColor: Theme.accent; strokeWidth: art.showLogo ? 3 : 0; fillColor: art.showLogo ? Qt.rgba(0.996, 0.502, 0.098, 0.133) : "transparent"
+            strokeColor: Theme.accent; strokeWidth: art.showLogo ? 3 : 0; fillColor: art.showLogo ? Theme.alpha(Theme.accent, 0.133) : "transparent"
             PathSvg { path: "M92 236a18 18 0 1 0 36 0a18 18 0 1 0 -36 0z" }
         }
     }

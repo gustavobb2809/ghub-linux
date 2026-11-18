@@ -89,7 +89,7 @@ Item {
                             Text {
                                 Layout.preferredWidth: 28
                                 text: String(row.index + 1)
-                                color: Theme.faint
+                                color: Theme.muted
                                 font.family: Theme.mono
                                 font.pixelSize: 13
                             }
@@ -105,6 +105,8 @@ Item {
                                 value: row.dpi
                                 onMoved: page.fail(row.index, page.backend.setDpiLevel(row.index, Math.round(value)))
                                 onPressedChanged: if (!pressed) page.commit()
+                                onNudged: page.commit()
+                                accessibleName: "Nível " + (row.index + 1) + " de DPI"
                             }
                             TextField {
                                 id: field
@@ -113,14 +115,14 @@ Item {
                                 text: String(row.dpi)
                                 inputMethodHints: Qt.ImhDigitsOnly
                                 horizontalAlignment: Text.AlignRight
-                                color: row.on ? Theme.yellow : Theme.fg
+                                color: row.on ? Theme.accentText : Theme.fg
                                 font.family: Theme.mono
                                 font.pixelSize: 14
                                 leftPadding: 10; rightPadding: 10; topPadding: 7; bottomPadding: 7
                                 background: Rectangle {
                                     radius: 8
                                     color: Theme.bg
-                                    border.color: field.activeFocus || row.on ? Theme.yellow : Theme.hi
+                                    border.color: field.activeFocus || row.on ? Theme.accent : Theme.border
                                     border.width: 1
                                 }
                                 onEditingFinished: {
@@ -139,54 +141,62 @@ Item {
                                     if (err === "") page.commit()
                                 }
                             }
-                            // radio do nivel ativo (16px, borda 2px)
-                            Rectangle {
+                            // rádio do nível ativo (16 px, borda 2 px)
+                            AbstractButton {
+                                id: radio
                                 Layout.preferredWidth: 22
                                 Layout.preferredHeight: 22
-                                color: "transparent"
-                                Rectangle {
-                                    anchors.centerIn: parent
-                                    width: 16; height: 16; radius: 8
-                                    color: "transparent"
-                                    border.width: 2
-                                    border.color: row.on ? Theme.yellow : Theme.border
+                                enabled: page.usable
+                                focusPolicy: Qt.TabFocus
+                                checkable: false
+                                Accessible.role: Accessible.RadioButton
+                                Accessible.name: "Usar o nível " + (row.index + 1) + " (" + row.dpi + " DPI)"
+                                Accessible.checked: row.on
+                                onClicked: page.backend.selectLevel(row.index)
+                                background: Item {
+                                    FocusRing { target: radio; baseRadius: 11; anchors.margins: -1 }
                                     Rectangle {
-                                        visible: row.on
                                         anchors.centerIn: parent
-                                        width: 7; height: 7; radius: 3.5
-                                        color: Theme.yellow
+                                        width: 16; height: 16; radius: 8
+                                        color: "transparent"
+                                        border.width: 2
+                                        border.color: row.on ? Theme.accent : Theme.border
+                                        Rectangle {
+                                            visible: row.on
+                                            anchors.centerIn: parent
+                                            width: 7; height: 7; radius: 3.5
+                                            color: Theme.accent
+                                        }
                                     }
                                 }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    enabled: page.usable
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: page.backend.selectLevel(row.index)
-                                }
+                                contentItem: Item { }
+                                HoverHandler { cursorShape: Qt.PointingHandCursor }
                             }
-                            Text {
-                                Layout.preferredWidth: 18
-                                horizontalAlignment: Text.AlignHCenter
-                                text: "✕"
-                                color: removeArea.containsMouse && removeArea.enabled ? Theme.bad : Theme.faint
-                                opacity: page.usable && page.levels.length > 1 ? 1 : 0.35
-                                font.family: Theme.ui
-                                font.pixelSize: 13
-                                MouseArea {
-                                    id: removeArea
-                                    anchors.fill: parent
-                                    anchors.margins: -4
-                                    hoverEnabled: true
-                                    enabled: page.usable && page.levels.length > 1
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: page.fail(row.index, page.backend.removeLevel(row.index))
+                            AbstractButton {
+                                id: removeBtn
+                                Layout.preferredWidth: 22
+                                Layout.preferredHeight: 22
+                                enabled: page.usable && page.levels.length > 1
+                                focusPolicy: Qt.TabFocus
+                                Accessible.name: "Remover o nível " + (row.index + 1)
+                                onClicked: page.fail(row.index, page.backend.removeLevel(row.index))
+                                background: Item { FocusRing { target: removeBtn; baseRadius: 11; anchors.margins: -1 } }
+                                contentItem: Text {
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                    text: "✕"
+                                    color: removeBtn.hovered && removeBtn.enabled ? Theme.badText : Theme.muted
+                                    opacity: removeBtn.enabled ? 1 : 0.35
+                                    font.family: Theme.ui
+                                    font.pixelSize: 13
                                 }
+                                HoverHandler { cursorShape: removeBtn.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor }
                             }
                         }
                         Text {
                             visible: page.rowErrorIndex === row.index && page.rowError !== ""
                             text: page.rowError
-                            color: Theme.bad
+                            color: Theme.badText
                             Layout.leftMargin: 44
                             Layout.bottomMargin: 6
                             font.family: Theme.ui
@@ -198,7 +208,7 @@ Item {
                     visible: page.rowErrorIndex === -2 && page.rowError !== ""
                     Layout.topMargin: 6
                     text: page.rowError
-                    color: Theme.bad
+                    color: Theme.badText
                     font.family: Theme.ui
                     font.pixelSize: 12
                 }
@@ -237,47 +247,17 @@ Item {
                         wrapMode: Text.WordWrap
                         Layout.fillWidth: true
                     }
-                    Rectangle {
+                    SegmentedControl {
                         visible: page.pollingOptions.length > 0
-                        Layout.preferredWidth: segRow.implicitWidth + 8
-                        Layout.preferredHeight: segRow.implicitHeight + 8
                         Layout.maximumWidth: parent.width
-                        color: Theme.bg
-                        radius: 10
-                        border.color: Theme.hi
-                        border.width: 1
-                        Row {
-                            id: segRow
-                            anchors.centerIn: parent
-                            spacing: 3
-                            Repeater {
-                                model: page.pollingOptions
-                                delegate: Rectangle {
-                                    id: seg
-                                    required property int modelData
-                                    readonly property bool on: modelData === page.backend.pollingHz
-                                    width: segText.implicitWidth + 32
-                                    height: segText.implicitHeight + 16
-                                    radius: 7
-                                    color: on ? Theme.yellow : "transparent"
-                                    Text {
-                                        id: segText
-                                        anchors.centerIn: parent
-                                        text: seg.modelData + (seg.on ? " Hz" : "")
-                                        color: seg.on ? Theme.bg : Theme.fgDim
-                                        font.family: Theme.mono
-                                        font.pixelSize: 13
-                                        font.weight: seg.on ? Font.Medium : Font.Normal
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        enabled: page.usable
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: page.backend.setPolling(seg.modelData)
-                                    }
-                                }
-                            }
-                        }
+                        enabled: page.usable
+                        name: "Taxa de polling"
+                        mono: true
+                        values: page.pollingOptions
+                        current: page.backend.pollingHz
+                        label: function (v) { return v === page.backend.pollingHz ? v + " Hz" : String(v) }
+                        spoken: function (v) { return v + " Hz" }
+                        onChosen: v => page.backend.setPolling(v)
                     }
                 }
                 // espaçador que mantém o card em meia largura; com muitas opções (7 no X2) o card
@@ -297,46 +277,13 @@ Item {
                     padH: 24; padV: 22
                     heading: "Distância de levantamento"
                     subtitle: "Altura em que o sensor para de rastrear ao levantar o mouse."
-                    Rectangle {
-                        Layout.preferredWidth: lodRow.implicitWidth + 8
-                        Layout.preferredHeight: lodRow.implicitHeight + 8
-                        Layout.maximumWidth: parent.width
-                        color: Theme.bg
-                        radius: 10
-                        border.color: Theme.hi
-                        border.width: 1
-                        Row {
-                            id: lodRow
-                            anchors.centerIn: parent
-                            spacing: 3
-                            Repeater {
-                                model: page.liftOffLevels
-                                delegate: Rectangle {
-                                    id: lod
-                                    required property string modelData
-                                    readonly property bool on: modelData === page.backend.liftOff
-                                    width: lodText.implicitWidth + 32
-                                    height: lodText.implicitHeight + 16
-                                    radius: 7
-                                    color: on ? Theme.yellow : "transparent"
-                                    Text {
-                                        id: lodText
-                                        anchors.centerIn: parent
-                                        text: page.liftOffLabel(lod.modelData)
-                                        color: lod.on ? Theme.bg : Theme.fgDim
-                                        font.family: Theme.mono
-                                        font.pixelSize: 13
-                                        font.weight: lod.on ? Font.Medium : Font.Normal
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        enabled: page.usable
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: page.backend.chooseLiftOff(lod.modelData)
-                                    }
-                                }
-                            }
-                        }
+                    SegmentedControl {
+                        enabled: page.usable
+                        name: "Distância de levantamento"
+                        values: page.liftOffLevels
+                        current: page.backend.liftOff
+                        label: page.liftOffLabel
+                        onChosen: v => page.backend.chooseLiftOff(v)
                     }
                 }
                 Item { Layout.fillWidth: true; Layout.preferredWidth: 100 }

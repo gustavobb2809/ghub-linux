@@ -36,6 +36,24 @@ cargo run -p ghub-gui
 
 O `packaging/install-user.sh` respeita `CARGO_TARGET_DIR` e instala o `ghub-gui`, o `.desktop` ("ghub" no menu de aplicativos) e o ícone SVG sob `~/.local`; `--no-gui` pula essa parte.
 
+## Tema
+
+As cores seguem o sistema, nesta ordem:
+
+1. **rice**: `$XDG_STATE_HOME/rice-theme/colors.json` (padrão `~/.local/state/rice-theme/colors.json`), relido a cada 1,5 s quando muda; a janela recolore ao vivo. Um arquivo inválido mantém as últimas cores boas; sem o arquivo, cai na próxima fonte.
+2. **system**: a paleta Qt do sistema (qt5ct/qt6ct via `QT_QPA_PLATFORMTHEME`, ou KDE).
+3. **ghub**: o Gruvbox embutido, quando não há nenhuma das anteriores.
+
+Seleção, foco, ação primária, logo e a cor padrão do LED usam o destaque do tema. Texto secundário, erros e contornos de controle passam por uma checagem de contraste (4,5:1 para texto, 3:1 para contornos) e são clareados quando a paleta não chega lá. As fontes são as do sistema (`Qt.application.font`), com JetBrains Mono para números.
+
+Variáveis: `GHUB_GUI_THEME=rice|system|ghub` força a fonte (o smoke usa `ghub` por padrão, para não depender da máquina); `GHUB_GUI_THEME_FILE` aponta outro `colors.json`. Capturas de cada modo:
+
+```bash
+GHUB_GUI_THEME=rice cargo run -p ghub-gui --features fake-daemon -- --smoke shots --shots /tmp/shots --fake lift-off
+```
+
+Teclado: Tab percorre os controles (anel de foco no destaque), setas mudam a escolha em grupos e no slider de DPI (Shift ou PageUp/PageDown = 10 passos; a roda só ajusta com o slider focado), `Ctrl+1`/`Ctrl+2`/`Ctrl+3` abrem Visão geral, Sensibilidade e Iluminação, `Ctrl+,` as Configurações e `Ctrl+P` o menu de perfil.
+
 ## Sem daemon nem mouse: `--fake`
 
 Com a feature `fake-daemon`, a GUI usa um daemon em memória em vez do D-Bus:
@@ -44,7 +62,7 @@ Com a feature `fake-daemon`, a GUI usa um daemon em memória em vez do D-Bus:
 cargo run -p ghub-gui --features fake-daemon -- --fake running
 ```
 
-Cenários de `--fake`: `running` (padrão, mouse conectado), `stopped` (daemon parado), `sleeping` (mouse dormindo: "lendo…", controles desabilitados) e `no-led` (mouse sem suporte a LED: a aba Iluminação some). Sem a feature, `--fake` sai com código 2.
+Cenários de `--fake`: `running` (padrão, mouse conectado), `stopped` (daemon parado), `sleeping` (mouse dormindo: "lendo…", controles desabilitados) `no-led` (mouse sem suporte a LED: a aba Iluminação some) e `lift-off` (mouse com lift-off ajustável). Sem a feature, `--fake` sai com código 2.
 
 ## Smoke headless
 
