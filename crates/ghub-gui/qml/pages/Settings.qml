@@ -42,7 +42,7 @@ Item {
                               : (page.backend.daemonState === "stopped" ? "Parado" : "Conectando")
                         fontSize: 12
                         tint: page.backend.daemonState === "running" ? Theme.good
-                              : (page.backend.daemonState === "stopped" ? Theme.bad : Theme.muted)
+                              : (page.backend.daemonState === "stopped" ? Theme.badText : Theme.muted)
                         edge: page.backend.daemonState === "running" ? Theme.goodDark
                               : (page.backend.daemonState === "stopped" ? Theme.bad : Theme.hi)
                     }
@@ -74,7 +74,7 @@ Item {
                 Layout.alignment: Qt.AlignTop
                 padH: 24; padV: 22
                 heading: "Perfis"
-                subtitle: "Toque em um perfil para ativá-lo. O ativo não pode ser apagado."
+                subtitle: "Use Ativar para trocar de perfil. O perfil ativo não pode ser apagado."
                 Repeater {
                     model: page.profiles
                     delegate: SettingRow {
@@ -95,7 +95,7 @@ Item {
                         Text {
                             visible: prow.asking
                             text: "Apagar?"
-                            color: Theme.bad
+                            color: Theme.badText
                             font.family: Theme.ui
                             font.pixelSize: 13
                         }
@@ -139,13 +139,15 @@ Item {
                             placeholderText: "Nome do novo perfil"
                             color: Theme.fg
                             placeholderTextColor: Theme.muted
+                            selectionColor: Theme.accent
+                            selectedTextColor: Theme.onAccent
                             font.family: Theme.ui
                             font.pixelSize: 13
                             leftPadding: 10; rightPadding: 10; topPadding: 7; bottomPadding: 7
                             background: Rectangle {
                                 radius: 8
                                 color: Theme.bg
-                                border.color: nameField.activeFocus ? Theme.yellow : Theme.hi
+                                border.color: nameField.activeFocus ? Theme.accent : Theme.border
                             }
                             onAccepted: create.clicked()
                         }
@@ -164,7 +166,7 @@ Item {
                 Text {
                     visible: page.createError !== ""
                     text: page.createError
-                    color: Theme.bad
+                    color: Theme.badText
                     font.family: Theme.ui
                     font.pixelSize: 12
                 }

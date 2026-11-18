@@ -79,7 +79,7 @@ Item {
                     width: grid.leftW
                     height: grid.height
                     opacity: page.backend.connected ? 1 : 0.5
-                    // fundo radial #3c3836 -> #2b2a29 (70%), centro em 50% 55%, raio 14
+                    // fundo radial: superfície elevada no centro, meio caminho até o fundo na borda (centro em 50% 55%)
                     Shape {
                         anchors.fill: parent
                         ShapePath {
@@ -92,8 +92,8 @@ Item {
                                                         + Math.pow(Math.max(centerY, mouseCard.height - centerY), 2)) * 0.7 + 1
                                 focalX: centerX
                                 focalY: centerY
-                                GradientStop { position: 0.0; color: "#3c3836" }
-                                GradientStop { position: 1.0; color: "#2b2a29" }
+                                GradientStop { position: 0.0; color: Theme.raised }
+                                GradientStop { position: 1.0; color: Theme.mix(Theme.card, Theme.bg, 0.5) }
                             }
                             PathSvg {
                                 path: {
@@ -148,7 +148,7 @@ Item {
                             Tag {
                                 visible: page.batteryTag !== ""
                                 text: page.batteryTag
-                                tint: page.backend.batteryLow ? Theme.bad : Theme.aqua
+                                tint: page.backend.batteryLow ? Theme.badText : Theme.aqua
                                 edge: page.backend.batteryLow ? Theme.bad : Theme.aquaDark
                             }
                         }
@@ -212,21 +212,31 @@ Item {
                                     implicitWidth: chipText.implicitWidth + 24
                                     implicitHeight: chipText.implicitHeight + 14 + 2
                                     radius: 8
-                                    color: on ? Theme.yellow : Theme.raised
-                                    border.color: on ? Theme.yellow : Theme.hi
+                                    color: on ? Theme.accent : (chipArea.containsMouse && page.usable ? Qt.lighter(Theme.raised, 1.12) : Theme.raised)
+                                    border.color: on ? Theme.accent : Theme.hi
                                     border.width: 1
+                                    activeFocusOnTab: page.usable
+                                    Accessible.role: Accessible.RadioButton
+                                    Accessible.name: "Nível " + (index + 1) + ": " + modelData + " DPI"
+                                    Accessible.checked: on
+                                    Keys.onReturnPressed: page.backend.selectLevel(chip.index)
+                                    Keys.onSpacePressed: page.backend.selectLevel(chip.index)
+                                    FocusRing { target: chip; baseRadius: 8 }
                                     Text {
                                         id: chipText
                                         anchors.centerIn: parent
                                         text: String(chip.modelData)
-                                        color: chip.on ? Theme.bg : Theme.fg2
+                                        color: chip.on ? Theme.onAccent : Theme.fg2
                                         font.family: Theme.mono
                                         font.pixelSize: 13
                                         font.weight: chip.on ? Font.Medium : Font.Normal
                                     }
                                     MouseArea {
+                                        id: chipArea
                                         anchors.fill: parent
                                         enabled: page.usable
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
                                         onClicked: page.backend.selectLevel(chip.index)
                                     }
                                 }
@@ -271,11 +281,18 @@ Item {
                                 Layout.fillWidth: true
                                 implicitHeight: 40
                                 radius: 9
-                                color: active ? Theme.raised : (area.containsMouse ? Qt.rgba(1, 1, 1, 0.04) : "transparent")
+                                color: active ? Theme.selection : (area.containsMouse ? Theme.alpha(Theme.fg, 0.05) : "transparent")
+                                activeFocusOnTab: true
+                                Accessible.role: Accessible.RadioButton
+                                Accessible.name: "Perfil " + modelData
+                                Accessible.checked: active
+                                Keys.onReturnPressed: page.backend.activateProfile(prow.modelData)
+                                Keys.onSpacePressed: page.backend.activateProfile(prow.modelData)
+                                FocusRing { target: prow; baseRadius: 9; anchors.margins: -1 }
                                 RowLayout {
                                     anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
                                     spacing: 12
-                                    Rectangle { width: 8; height: 8; radius: 4; color: prow.active ? Theme.yellow : Theme.hi }
+                                    Rectangle { width: 8; height: 8; radius: 4; color: prow.active ? Theme.accent : Theme.border }
                                     Text {
                                         Layout.fillWidth: true
                                         text: prow.modelData
@@ -296,6 +313,7 @@ Item {
                                     id: area
                                     anchors.fill: parent
                                     hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
                                     onClicked: page.backend.activateProfile(prow.modelData)
                                 }
                             }

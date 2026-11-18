@@ -5,3 +5,4 @@ pub mod led;
 pub mod names;
 pub mod props;
 pub mod state;
+pub mod theme;

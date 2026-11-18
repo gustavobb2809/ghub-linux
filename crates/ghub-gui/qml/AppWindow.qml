@@ -35,6 +35,7 @@ ApplicationWindow {
     function layoutReport() { return layout.report() }
     function sensitivityMinTrack() { return sensitivity.minTrackWidth() }
     function openProfileMenu() { if (pill.visible) profileMenu.open() }
+    function openProfileMenuByKey() { if (pill.visible) { pill.viaKeyboard = true; profileMenu.open() } }
     function shellItem() { return shell }
     function menuItem() { return profileMenu.contentItem }
     function closeProfileMenu() { profileMenu.close() }
@@ -51,6 +52,25 @@ ApplicationWindow {
         onActivateRequested: { if (win.visibility === Window.Minimized) win.showNormal(); win.show(); win.raise(); win.requestActivate() }
         Component.onCompleted: backend.start()
     }
+
+    // Cores do sistema: rice (colors.json, relido a cada 1,5 s se mudou), paleta Qt ou Gruvbox.
+    ThemeSource {
+        id: themeSource
+        onColorsJsonChanged: Theme.setRice(colorsJson)
+        Component.onCompleted: {
+            Theme.fallback = fallback
+            refresh()
+            Theme.setRice(colorsJson)
+        }
+    }
+    Timer { interval: 1500; repeat: true; running: themeSource.watching; onTriggered: themeSource.refresh() }
+
+    // Atalhos: Ctrl+1/2/3 nas abas, Ctrl+, nas Configurações, Ctrl+P no perfil.
+    Shortcut { sequence: "Ctrl+1"; enabled: win.pagesVisible; onActivated: win.goTo(0) }
+    Shortcut { sequence: "Ctrl+2"; enabled: win.pagesVisible; onActivated: win.goTo(1) }
+    Shortcut { sequence: "Ctrl+3"; enabled: win.pagesVisible && backend.ledSupported; onActivated: win.goTo(3) }
+    Shortcut { sequence: "Ctrl+,"; enabled: win.pagesVisible; onActivated: win.goTo(2) }
+    Shortcut { sequence: "Ctrl+P"; enabled: pill.visible; onActivated: win.openProfileMenuByKey() }
 
     // Sem suporte a LED a aba some; se estava nela, volta para a Visao geral.
     Connections {
@@ -102,7 +122,7 @@ ApplicationWindow {
                     Layout.topMargin: 6
                     Layout.bottomMargin: 6
                     text: "Dispositivos"
-                    color: Theme.faint
+                    color: Theme.muted
                     font.family: Theme.ui
                     font.pixelSize: 11
                     font.letterSpacing: 1.2
@@ -129,7 +149,7 @@ ApplicationWindow {
                         enabled: !win.disconnectedVisible
                         glyph1: "M12 3c-3.5 0-6 2.6-6 6v6c0 3.4 2.5 6 6 6s6-2.6 6-6V9c0-3.4-2.5-6-6-6z"
                         glyph2: "M12 3v7"
-                        glyphColor: selected ? Theme.yellow : Theme.faint
+                        glyphColor: selected ? Theme.accentText : Theme.muted
                         onClicked: { if (!selected) backend.selectDevice(modelData.id); if (win.onSettings) win.goTo(0) }
                     }
                 }
@@ -198,7 +218,16 @@ ApplicationWindow {
                         id: pill
                         visible: !win.onSettings && backend.hasDevice
                         radius: height / 2
-                        color: Theme.raised
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.ButtonMenu
+                        Accessible.name: "Perfil " + backend.activeProfile
+                        // o menu aberto pelo teclado devolve o foco ao fechar; pelo mouse, não deixa anel
+                        property bool viaKeyboard: false
+                        Keys.onReturnPressed: win.openProfileMenuByKey()
+                        Keys.onSpacePressed: win.openProfileMenuByKey()
+                        Keys.onDownPressed: win.openProfileMenuByKey()
+                        FocusRing { target: pill; baseRadius: pill.height / 2 }
+                        color: pillArea.containsMouse ? Qt.lighter(Theme.raised, 1.12) : Theme.raised
                         border.color: Theme.hi
                         border.width: 1
                         implicitWidth: pillRow.implicitWidth + 28 + 2
@@ -214,8 +243,9 @@ ApplicationWindow {
                         MouseArea {
                             id: pillArea
                             anchors.fill: parent
+                            hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: profileMenu.opened ? profileMenu.close() : profileMenu.open()
+                            onClicked: { pill.viaKeyboard = false; profileMenu.opened ? profileMenu.close() : profileMenu.open() }
                         }
                         Popup {
                             id: profileMenu
@@ -225,23 +255,50 @@ ApplicationWindow {
                             width: Math.max(220, pill.width)
                             padding: 6
                             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                            focus: true
+                            // abre com o foco no perfil ativo; setas andam, Enter ativa, Esc fecha
+                            onOpened: {
+                                const i = Math.max(0, win.profileList.indexOf(backend.activeProfile))
+                                const it = menuRepeater.itemAt(i)
+                                if (it) it.forceActiveFocus(pill.viaKeyboard ? Qt.TabFocusReason : Qt.MouseFocusReason)
+                            }
+                            onClosed: {
+                                if (pill.viaKeyboard) pill.forceActiveFocus(Qt.TabFocusReason)
+                                pill.viaKeyboard = false
+                            }
                             background: Rectangle { color: Theme.card; radius: 12; border.color: Theme.hi; border.width: 1 }
                             contentItem: ColumnLayout {
                                 spacing: 2
                                 Repeater {
+                                    id: menuRepeater
                                     model: win.profileList
                                     delegate: Rectangle {
                                         id: mi
                                         required property string modelData
+                                        required property int index
                                         readonly property bool active: modelData === backend.activeProfile
                                         Layout.fillWidth: true
                                         implicitHeight: 36
                                         radius: 8
-                                        color: active ? Theme.raised : (miArea.containsMouse ? Qt.rgba(1, 1, 1, 0.05) : "transparent")
+                                        activeFocusOnTab: true
+                                        Accessible.role: Accessible.MenuItem
+                                        Accessible.name: modelData + (active ? ", ativo" : "")
+                                        function choose() { backend.activateProfile(mi.modelData); profileMenu.close() }
+                                        function focusAt(i) {
+                                            const it = menuRepeater.itemAt((i + menuRepeater.count) % menuRepeater.count)
+                                            if (it) it.forceActiveFocus(Qt.TabFocusReason)
+                                        }
+                                        Keys.onReturnPressed: choose()
+                                        Keys.onSpacePressed: choose()
+                                        Keys.onDownPressed: focusAt(index + 1)
+                                        Keys.onUpPressed: focusAt(index - 1)
+                                        color: active ? Theme.selection
+                                               : (miArea.containsMouse || activeFocus ? Theme.alpha(Theme.fg, 0.06) : "transparent")
+                                        FocusRing { target: mi; baseRadius: 8; anchors.margins: -1 }
                                         RowLayout {
                                             anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
                                             spacing: 10
-                                            Rectangle { width: 8; height: 8; radius: 4; color: mi.active ? Theme.yellow : Theme.hi }
+                                            Rectangle { width: 8; height: 8; radius: 4; color: mi.active ? Theme.accent : Theme.border }
                                             Text {
                                                 Layout.fillWidth: true
                                                 text: mi.modelData
@@ -256,7 +313,7 @@ ApplicationWindow {
                                             id: miArea
                                             anchors.fill: parent
                                             hoverEnabled: true
-                                            onClicked: { backend.activateProfile(mi.modelData); profileMenu.close() }
+                                            onClicked: mi.choose()
                                         }
                                     }
                                 }

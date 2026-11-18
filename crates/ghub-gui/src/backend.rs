@@ -111,6 +111,20 @@ pub mod qobject {
         fn activate_requested(self: Pin<&mut Backend>);
     }
 
+    extern "RustQt" {
+        /// Cores do tema do sistema para o `Theme.qml` (veja `model::theme`).
+        #[qobject]
+        #[qml_element]
+        #[qproperty(QString, colors_json, cxx_name = "colorsJson")]
+        #[qproperty(QString, fallback)]
+        #[qproperty(bool, watching)]
+        type ThemeSource = super::ThemeSourceRust;
+
+        /// Relê o `colors.json` do rice se ele mudou (barato: só compara data e tamanho).
+        #[qinvokable]
+        fn refresh(self: Pin<&mut ThemeSource>);
+    }
+
     impl cxx_qt::Threading for Backend {}
 }
 
@@ -136,6 +150,9 @@ pub enum Mode {
 }
 /// Modo global, definido pelo `main` antes de `Backend::start`.
 pub static MODE: OnceLock<Mode> = OnceLock::new();
+
+/// Execução de smoke: o tema não lê a máquina (salvo `GHUB_GUI_THEME`), para os testes serem estáveis.
+pub static SMOKE: OnceLock<bool> = OnceLock::new();
 
 /// Receptor de ativacoes (instancia unica), entregue pelo `main`.
 pub static ACTIVATIONS: OnceLock<Mutex<Option<Receiver<()>>>> = OnceLock::new();
@@ -490,5 +507,61 @@ impl qobject::Backend {
 
     fn clear_error(self: Pin<&mut Self>) {
         self.set_last_error(QString::default());
+    }
+}
+
+// ---- tema do sistema ----
+
+pub struct ThemeSourceRust {
+    colors_json: QString,
+    fallback: QString,
+    watching: bool,
+    path: Option<std::path::PathBuf>,
+    /// Data e tamanho da última leitura; `None` = arquivo ausente.
+    stamp: Option<(Option<std::time::SystemTime>, u64)>,
+}
+
+impl Default for ThemeSourceRust {
+    fn default() -> Self {
+        use crate::model::theme;
+        let env = |k: &str| std::env::var(k).ok();
+        let mode = theme::mode_from(env("GHUB_GUI_THEME").as_deref(), SMOKE.get().copied().unwrap_or(false));
+        let platform = theme::platform_themed(env("QT_QPA_PLATFORMTHEME").as_deref(), env("XDG_CURRENT_DESKTOP").as_deref());
+        let path = if mode.reads_rice() {
+            theme::colors_path(env("GHUB_GUI_THEME_FILE").as_deref(), env("XDG_STATE_HOME").as_deref(), env("HOME").as_deref())
+        } else {
+            None
+        };
+        ThemeSourceRust {
+            colors_json: QString::default(),
+            fallback: QString::from(mode.fallback(platform)),
+            watching: path.is_some(),
+            path,
+            stamp: None,
+        }
+    }
+}
+
+impl qobject::ThemeSource {
+    fn refresh(mut self: Pin<&mut Self>) {
+        let Some(path) = self.rust().path.clone() else { return };
+        let stamp = std::fs::metadata(&path).ok().map(|m| (m.modified().ok(), m.len()));
+        if stamp == self.rust().stamp {
+            return;
+        }
+        self.as_mut().rust_mut().stamp = stamp;
+        let next = if stamp.is_none() {
+            // sem o arquivo (rice ausente ou removido): volta à reserva
+            Some(String::new())
+        } else {
+            // inválido (ex.: no meio de uma gravação): mantém as últimas cores boas
+            std::fs::read_to_string(&path).ok().and_then(|t| crate::model::theme::parse_colors(&t))
+        };
+        if let Some(json) = next {
+            let json = QString::from(json.as_str());
+            if json != self.rust().colors_json {
+                self.as_mut().set_colors_json(json);
+            }
+        }
     }
 }

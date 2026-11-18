@@ -36,6 +36,7 @@ fn main() {
         None => Mode::Real,
     };
     let _ = MODE.set(mode);
+    let _ = backend::SMOKE.set(smoke.is_some());
 
     // Smoke nao adquire a instancia unica (nao toca o barramento).
     let mut _primary = None;
