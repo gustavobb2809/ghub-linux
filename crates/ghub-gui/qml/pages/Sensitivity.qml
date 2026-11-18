@@ -18,11 +18,18 @@ Item {
     property string rowError: ""
     property int rowErrorIndex: -1
     property int commits: 0
+    // houve mudança de DPI desde a última gravação (só então o "Gravado" aparece)
+    property bool pendingEdit: false
 
     function commit() {
         page.commits++
         page.backend.commitDpi()
+        if (page.pendingEdit && page.rowError === "") savedFlash.restart()
+        page.pendingEdit = false
     }
+    // teclado e roda gravam depois de uma pausa, não a cada passo
+    Timer { id: nudgeCommit; interval: 400; onTriggered: page.commit() }
+    Timer { id: savedFlash; interval: 1800 }
     // usado pelo smoke: simula soltar o slider / terminar a edicao do campo
     function simulateRelease(i) { levelRepeater.itemAt(i).slider.pressedChanged() }
     function fieldText(i) { return levelRepeater.itemAt(i).field.text }
@@ -57,7 +64,6 @@ Item {
             x: Theme.pad; y: Theme.pad
             width: flick.width - 2 * Theme.pad
             spacing: Theme.gap
-            opacity: page.usable ? 1 : 0.5
 
             Card {
                 Layout.fillWidth: true
@@ -103,9 +109,12 @@ Item {
                                 to: page.backend.dpiMax
                                 stepSize: page.backend.dpiStep > 0 ? page.backend.dpiStep : 50
                                 value: row.dpi
-                                onMoved: page.fail(row.index, page.backend.setDpiLevel(row.index, Math.round(value)))
+                                logScale: true
+                                ticks: [400, 800, 1600, 3200, 6400, 12800]
+                                unit: "DPI"
+                                onMoved: { page.pendingEdit = true; page.fail(row.index, page.backend.setDpiLevel(row.index, Math.round(value))) }
                                 onPressedChanged: if (!pressed) page.commit()
-                                onNudged: page.commit()
+                                onNudged: nudgeCommit.restart()
                                 accessibleName: "Nível " + (row.index + 1) + " de DPI"
                             }
                             TextField {
@@ -115,6 +124,8 @@ Item {
                                 text: String(row.dpi)
                                 inputMethodHints: Qt.ImhDigitsOnly
                                 horizontalAlignment: Text.AlignRight
+                                opacity: enabled ? 1 : 0.5
+                                Accessible.name: "Nível " + (row.index + 1) + ", DPI"
                                 color: row.on ? Theme.accentText : Theme.fg
                                 font.family: Theme.mono
                                 font.pixelSize: 14
@@ -138,7 +149,7 @@ Item {
                                     const err = isNaN(v) ? page.backend.validateDpi(0)
                                                          : page.backend.setDpiLevel(row.index, v)
                                     page.fail(row.index, err)
-                                    if (err === "") page.commit()
+                                    if (err === "") { page.pendingEdit = true; page.commit() }
                                 }
                             }
                             // rádio do nível ativo (16 px, borda 2 px)
@@ -147,6 +158,7 @@ Item {
                                 Layout.preferredWidth: 22
                                 Layout.preferredHeight: 22
                                 enabled: page.usable
+                                opacity: enabled ? 1 : 0.5
                                 focusPolicy: Qt.TabFocus
                                 checkable: false
                                 Accessible.role: Accessible.RadioButton
@@ -212,15 +224,32 @@ Item {
                     font.family: Theme.ui
                     font.pixelSize: 12
                 }
-                Text {
+                RowLayout {
+                    Layout.fillWidth: true
                     Layout.topMargin: 8
-                    text: page.backend.dpiMax > 0
-                          ? "Faixa: " + page.backend.dpiMin + "–" + page.backend.dpiMax
-                            + " DPI, passo " + page.backend.dpiStep + ". Até 5 níveis."
-                          : "Faixa disponível quando o mouse acordar. Até 5 níveis."
-                    color: Theme.muted
-                    font.family: Theme.ui
-                    font.pixelSize: 12
+                    spacing: 12
+                    Text {
+                        Layout.fillWidth: true
+                        text: page.backend.dpiMax > 0
+                              ? "Faixa: " + page.backend.dpiMin + "–" + page.backend.dpiMax
+                                + " DPI, passo " + page.backend.dpiStep + "."
+                              : "Faixa disponível quando o mouse acordar."
+                        color: Theme.muted
+                        elide: Text.ElideRight
+                        font.family: Theme.ui
+                        font.pixelSize: 12
+                    }
+                    Text {
+                        text: "✓ Gravado no mouse"
+                        color: Theme.good
+                        opacity: savedFlash.running ? 1 : 0
+                        Behavior on opacity { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: savedFlash.running ? text : ""
+                        font.family: Theme.ui
+                        font.pixelSize: 12
+                        font.weight: Font.Medium
+                    }
                 }
             }
 

@@ -4,6 +4,7 @@ import org.ghublinux.gui
 // Escolha única em segmentos (taxa de polling, lift-off). O clique e as setas aplicam na hora;
 // Tab entra no grupo, Esquerda/Direita andam, Home/End vão às pontas.
 // `values`: os valores; `label(v)`: o texto visível; `spoken(v)`: o nome para o leitor de tela.
+// Quando o layout dá menos largura que a de uma linha, os segmentos quebram em mais linhas.
 FocusScope {
     id: sc
     property var values: []
@@ -15,8 +16,14 @@ FocusScope {
     signal chosen(var value)
 
     readonly property int index: values.indexOf(current)
-    implicitWidth: frame.implicitWidth
-    implicitHeight: frame.implicitHeight
+    // largura de uma linha só (a preferida); a altura acompanha a quebra
+    readonly property real lineWidth: {
+        let w = 0
+        for (let i = 0; i < rep.count; i++) { const it = rep.itemAt(i); if (it) w += it.implicitWidth }
+        return w + Math.max(0, rep.count - 1) * flow.spacing + 8
+    }
+    implicitWidth: lineWidth
+    implicitHeight: flow.implicitHeight + 8
     activeFocusOnTab: true
     opacity: enabled ? 1 : 0.5
     Accessible.role: Accessible.Grouping
@@ -36,24 +43,27 @@ FocusScope {
 
     Rectangle {
         id: frame
-        implicitWidth: row.implicitWidth + 8
-        implicitHeight: row.implicitHeight + 8
+        width: sc.width
+        height: sc.height
         color: Theme.bg
         radius: 10
         border.color: Theme.hi
         border.width: 1
         FocusRing { target: sc; baseRadius: 10 }
-        Row {
-            id: row
-            anchors.centerIn: parent
+        Flow {
+            id: flow
+            x: 4; y: 4
+            width: Math.max(0, frame.width - 8)
             spacing: 3
             Repeater {
+                id: rep
                 model: sc.values
                 delegate: Rectangle {
                     id: seg
                     required property var modelData
                     readonly property bool on: modelData === sc.current
-                    width: txt.implicitWidth + 30
+                    implicitWidth: txt.implicitWidth + 30
+                    width: implicitWidth
                     height: txt.implicitHeight + 16
                     radius: 7
                     color: on ? Theme.accent : (ma.containsMouse && sc.enabled ? Theme.alpha(Theme.fg, 0.06) : "transparent")

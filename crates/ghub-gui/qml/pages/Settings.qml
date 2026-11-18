@@ -52,6 +52,7 @@ Item {
                     note: page.backend.autostartKnown ? "ghubd.service" : "Serviço do systemd não encontrado"
                     Toggle {
                         visible: page.backend.autostartKnown
+                        Accessible.name: "Iniciar com a sessão"
                         checked: page.backend.autostartEnabled
                         onToggled: {
                             page.backend.setAutostart(checked)

@@ -5,6 +5,8 @@ import org.ghublinux.gui
 // Teclado (com foco): setas = 1 passo, Shift+setas e PageUp/PageDown = 10 passos, Home/End = pontas.
 // A roda do mouse só ajusta com o slider focado, para não roubar a rolagem da página.
 // `moved` acompanha o arrasto; `nudged` sai a cada ajuste por teclado ou roda (a página grava).
+// `logScale`: a posição no trilho segue o logaritmo do valor (DPI: 400, 800, 1600 e 3200 ficam
+// espaçados igualmente, em vez de espremidos no começo de 100–25600). `ticks`: marcas no trilho.
 Item {
     id: s
     property real from: 0
@@ -12,9 +14,18 @@ Item {
     property real stepSize: 1
     property real value: 0
     property bool active: false
+    property bool logScale: false
+    property var ticks: []
+    property string unit: ""
     property string accessibleName: ""
     readonly property bool pressed: area.pressed
-    readonly property real position: to > from ? Math.max(0, Math.min(1, (value - from) / (to - from))) : 0
+    readonly property bool _log: logScale && from > 0 && to > from
+    function fractionOf(v) {
+        if (!(s.to > s.from)) return 0
+        const f = s._log ? Math.log(v / s.from) / Math.log(s.to / s.from) : (v - s.from) / (s.to - s.from)
+        return Math.max(0, Math.min(1, f))
+    }
+    readonly property real position: fractionOf(value)
     signal moved()
     signal nudged()
     implicitHeight: 18
@@ -23,7 +34,7 @@ Item {
 
     Accessible.role: Accessible.Slider
     Accessible.name: s.accessibleName
-    Accessible.description: Math.round(s.value) + " DPI"
+    Accessible.description: Math.round(s.value) + (s.unit !== "" ? " " + s.unit : "")
 
     function _clamp(v) {
         if (s.stepSize > 0) v = s.from + Math.round((v - s.from) / s.stepSize) * s.stepSize
@@ -32,7 +43,7 @@ Item {
     function _setFromX(x) {
         const usable = Math.max(1, s.width - 18)
         const f = Math.max(0, Math.min(1, (x - 9) / usable))
-        const v = s._clamp(s.from + f * (s.to - s.from))
+        const v = s._clamp(s._log ? s.from * Math.pow(s.to / s.from, f) : s.from + f * (s.to - s.from))
         if (v !== s.value) { s.value = v; s.moved() }
     }
     function nudge(steps) {
@@ -65,12 +76,22 @@ Item {
         x: 9; width: s.width - 18
         anchors.verticalCenter: parent.verticalCenter
         height: 6; radius: 3
-        color: Theme.hi
+        color: Theme.mix(Theme.hi, Theme.border, 0.5)
         opacity: s.enabled ? 1 : 0.6
         Rectangle {
             height: parent.height; radius: 3
             width: s.position * parent.width
             color: s.active ? Theme.accent : Theme.border
+        }
+        Repeater {
+            model: s.ticks.filter(t => t > s.from && t < s.to)
+            Rectangle {
+                required property real modelData
+                x: s.fractionOf(modelData) * track.width - 1
+                anchors.verticalCenter: parent.verticalCenter
+                width: 2; height: 10; radius: 1
+                color: Theme.border
+            }
         }
     }
     Rectangle {

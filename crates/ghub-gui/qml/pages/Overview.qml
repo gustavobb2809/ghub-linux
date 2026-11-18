@@ -11,7 +11,7 @@ Item {
     readonly property bool usable: backend.connected && backend.dpiCurrent > 0
     readonly property var levels: JSON.parse(backend.dpiLevelsJson)
     readonly property var profiles: JSON.parse(backend.profilesJson)
-    // texto exibido no cartao de DPI ("1200 DPI" ou "lendo…"; nunca "0 DPI")
+    // texto exibido no cartao de DPI ("1200 DPI", "lendo…" ou "—" dormindo; nunca "0 DPI")
     readonly property string dpiShown: backend.dpiCurrent > 0 ? dpiValue.text + " " + dpiUnit.text : backend.dpiText
     readonly property string batteryTag: {
         const t = backend.batteryText
@@ -78,7 +78,7 @@ Item {
                     x: 0; y: 0
                     width: grid.leftW
                     height: grid.height
-                    opacity: page.backend.connected ? 1 : 0.5
+                    opacity: page.backend.connected ? 1 : 0.5   // desenho decorativo, sem texto
                     // fundo radial: superfície elevada no centro, meio caminho até o fundo na borda (centro em 50% 55%)
                     Shape {
                         anchors.fill: parent
@@ -124,7 +124,6 @@ Item {
                     Card {
                         Layout.fillWidth: true
                         title: "Bateria"
-                        opacity: page.backend.connected ? 1 : 0.5
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.bottomMargin: 12
@@ -168,7 +167,6 @@ Item {
                     Card {
                         Layout.fillWidth: true
                         title: "DPI ativo"
-                        opacity: page.backend.connected ? 1 : 0.5
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.bottomMargin: 14
@@ -202,6 +200,7 @@ Item {
                         Flow {
                             Layout.fillWidth: true
                             spacing: 8
+                            opacity: page.usable ? 1 : 0.5   // só os controles apagam; o texto fica legível
                             Repeater {
                                 model: page.levels
                                 delegate: Rectangle {
@@ -247,7 +246,6 @@ Item {
                     Card {
                         Layout.fillWidth: true
                         title: "Taxa de polling"
-                        opacity: page.backend.connected ? 1 : 0.5
                         RowLayout {
                             spacing: 6
                             Text {
