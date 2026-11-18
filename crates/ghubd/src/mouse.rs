@@ -46,11 +46,23 @@ pub struct HidppMouse<T: Transport> {
     /// Último LED lido/gravado: evita ~35 leituras HID++ a cada atualização da GUI. Some
     /// só até reconectar (o objeto é recriado) ou até uma gravação falhar (estado incerto).
     led_cache: Option<Led>,
+    /// Última taxa gravada no polling estendido. O `0x8061` não informa a taxa efetiva (a
+    /// leitura devolve sempre o mesmo valor), então o daemon lembra o que gravou.
+    rate_cache: Option<u16>,
 }
+
+/// Taxa de um mouse recém-ligado, usada enquanto o daemon ainda não gravou nenhuma.
+const POWER_ON_POLLING_HZ: u16 = 1000;
 
 impl<T: Transport> HidppMouse<T> {
     pub fn new(device: Device<T>) -> Self {
-        HidppMouse { device, backup_dir: onboard::default_backup_dir(), backed_up: false, led_cache: None }
+        HidppMouse {
+            device,
+            backup_dir: onboard::default_backup_dir(),
+            backed_up: false,
+            led_cache: None,
+            rate_cache: None,
+        }
     }
 
     pub fn with_backup_dir(mut self, dir: PathBuf) -> Self {
@@ -87,9 +99,8 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
         } else {
             dpi::supported(&mut self.device, SENSOR)?
         };
-        // Polling estendido é só leitura (a gravação não tem efeito conhecido): sem opções.
         let polling_hz = if self.extended_polling() {
-            Vec::new()
+            report_rate_ext::supported_hz(&mut self.device)?
         } else {
             report_rate::supported_hz(&mut self.device)?
         };
@@ -116,7 +127,7 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
 
     fn read_polling_hz(&mut self) -> MouseResult<u16> {
         if self.extended_polling() {
-            return report_rate_ext::current_hz(&mut self.device);
+            return Ok(self.rate_cache.unwrap_or(POWER_ON_POLLING_HZ));
         }
         report_rate::current_hz(&mut self.device)
     }
@@ -130,7 +141,9 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
 
     fn set_polling_hz(&mut self, hz: u16) -> MouseResult<()> {
         if self.extended_polling() {
-            return Err(HidppError::InvalidArgument("polling is read-only on this device"));
+            report_rate_ext::set_hz(&mut self.device, hz)?;
+            self.rate_cache = Some(hz);
+            return Ok(());
         }
         report_rate::set_hz(&mut self.device, hz)
     }
@@ -146,7 +159,7 @@ impl<T: Transport + Send> Mouse for HidppMouse<T> {
 
     fn set_led(&mut self, led: &Led) -> MouseResult<()> {
         let tag = format!("dev{}", self.device.device_index());
-        let HidppMouse { device, backup_dir, backed_up, led_cache } = self;
+        let HidppMouse { device, backup_dir, backed_up, led_cache, .. } = self;
         let result = onboard::set_led(device, led, |p| {
             if !*backed_up {
                 onboard::save_backup(backup_dir, &tag, p)?;
@@ -198,7 +211,7 @@ mod tests {
     }
 
     #[test]
-    fn extended_mouse_enters_host_mode_and_has_read_only_polling() {
+    fn extended_mouse_enters_host_mode_and_lists_the_receiver_polling_rates() {
         let mut fake = FakeTransport::new();
         fake.push_incoming(long_reply(1, 13, fb(1), &[])); // modo host
         let stream: [u8; 26] = [
@@ -211,22 +224,32 @@ mod tests {
             fake.push_incoming(long_reply(1, 9, fb(2), &params));
         }
         fake.push_incoming(long_reply(1, 9, fb(2), &[0, 0, 2])); // página vazia: fim da lista
+        fake.push_incoming(long_reply(1, 12, fb(0), &[0x00, 0x0f])); // taxas do receptor
         let mut m = x2(fake);
         let caps = m.capabilities().unwrap();
         assert_eq!(caps.dpi, DpiSupport::Range { min: 100, max: 10000, step: 100 });
-        assert!(caps.polling_hz.is_empty());
+        assert_eq!(caps.polling_hz, vec![125, 250, 500, 1000]);
         assert!(caps.led.is_empty(), "o X2 não tem LED");
-        assert!(m.set_polling_hz(500).is_err());
     }
 
     #[test]
-    fn extended_mouse_reads_dpi_and_polling_from_the_extended_features() {
+    fn extended_polling_is_remembered_because_the_device_cannot_report_it() {
+        let mut fake = FakeTransport::new();
+        fake.push_incoming(long_reply(1, 12, fb(3), &[]));
+        let mut m = x2(fake);
+        assert_eq!(m.read_polling_hz(), Ok(1000), "sem gravação, vale o padrão de fábrica");
+        m.set_polling_hz(500).unwrap();
+        assert_eq!(m.read_polling_hz(), Ok(500));
+        assert!(m.set_polling_hz(333).is_err());
+        assert_eq!(m.read_polling_hz(), Ok(500), "uma gravação recusada não muda o que lembramos");
+    }
+
+    #[test]
+    fn extended_mouse_reads_dpi_from_the_extended_feature() {
         let mut fake = FakeTransport::new();
         fake.push_incoming(long_reply(1, 9, fb(5), &[0, 0x03, 0x20, 0x03, 0x20, 0x03, 0x20, 0x03, 0x20, 2]));
-        fake.push_incoming(long_reply(1, 12, fb(2), &[3]));
         let mut m = x2(fake);
         assert_eq!(m.read_dpi(), Ok(800));
-        assert_eq!(m.read_polling_hz(), Ok(1000));
     }
 
     #[test]
